@@ -40,7 +40,7 @@ export async function POST(request: Request) {
                   name
                   headline
                 }
-                comments(first: 50, order: VOTES) {
+                comments(first: 50) {
                   edges {
                     node {
                       body
