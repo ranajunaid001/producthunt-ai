@@ -26,6 +26,11 @@ When answering questions:
 4. If analyzing sentiment, quote actual comments
 5. Be concise but comprehensive
 
+IMPORTANT: When searching for specific categories or keywords:
+- If no products match the search criteria, simply state that no products were found for that category
+- DO NOT show unrelated trending products as a fallback
+- Only show products that match what the user asked for
+
 Remember: You have access to real Product Hunt data. Always fetch fresh data rather than making assumptions.`
 
 export async function POST(request: Request) {
