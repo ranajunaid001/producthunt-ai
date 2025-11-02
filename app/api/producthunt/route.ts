@@ -1,52 +1,46 @@
 import { NextResponse } from 'next/server'
 
-// Product Hunt doesn't require API key for basic public data
-const PRODUCTHUNT_API = 'https://www.producthunt.com/frontend/graphql'
-
 export async function POST(request: Request) {
   try {
     const { query } = await request.json()
     
-    if (!query) {
-      return NextResponse.json({ error: 'Query is required' }, { status: 400 })
-    }
-
-    // Simple query to get today's products
-    const graphqlQuery = `
-      query {
-        posts(order: VOTES, first: 5) {
-          nodes {
-            id
-            name
-            tagline
-            votesCount
-            url
-            website
-          }
-        }
-      }
-    `
-
-    const response = await fetch(PRODUCTHUNT_API, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    // Return mock data for now to test the connection
+    const mockProducts = [
+      {
+        id: '1',
+        name: 'Claude 3',
+        tagline: 'The most capable AI assistant',
+        votesCount: 523,
+        url: 'https://producthunt.com/products/claude-3',
+        website: 'https://claude.ai'
       },
-      body: JSON.stringify({
-        query: graphqlQuery
-      })
-    })
-
-    const data = await response.json()
+      {
+        id: '2',
+        name: 'Linear',
+        tagline: 'The new standard for modern software development',
+        votesCount: 412,
+        url: 'https://producthunt.com/products/linear',
+        website: 'https://linear.app'
+      },
+      {
+        id: '3',
+        name: 'Cursor',
+        tagline: 'The AI-first code editor',
+        votesCount: 389,
+        url: 'https://producthunt.com/products/cursor',
+        website: 'https://cursor.sh'
+      }
+    ]
     
     return NextResponse.json({
-      products: data.data?.posts?.nodes || [],
-      query: query
+      products: mockProducts,
+      query: query,
+      mock: true // indicator that this is mock data
     })
   } catch (error) {
-    console.error('Product Hunt API Error:', error)
+    console.error('Error:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch Product Hunt data' },
+      { error: 'Failed to process request' },
       { status: 500 }
     )
   }
