@@ -43,7 +43,7 @@ export async function POST(request: Request) {
       date: date || today,
       count: products.length
     })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Product Hunt API Error:', error)
     
     // If real API fails, return mock data so the app still works
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     
     return NextResponse.json({
       products: mockProducts,
-      query: query,
+      query: '', // Fixed: removed undefined variable
       error: error.message,
       mock: true
     })
