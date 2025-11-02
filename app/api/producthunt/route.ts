@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server'
 
-const DEVELOPER_TOKEN = '9aiZygx2ZjK5NfLMBaTZq9IkfcYLaMEMK51CBxpIDpg'
-
 export async function POST(request: Request) {
   try {
     const { query, productCount = 10 } = await request.json()
+    
+    // Get token from environment variable
+    const DEVELOPER_TOKEN = process.env.PRODUCTHUNT_TOKEN
+    
+    if (!DEVELOPER_TOKEN) {
+      throw new Error('Product Hunt API token not configured')
+    }
     
     // Get products with 50 comments each
     const graphqlQuery = {
