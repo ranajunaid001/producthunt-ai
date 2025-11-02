@@ -4,13 +4,13 @@ const DEVELOPER_TOKEN = '9aiZygx2ZjK5NfLMBaTZq9IkfcYLaMEMK51CBxpIDpg'
 
 export async function POST(request: Request) {
   try {
-    const { query } = await request.json()
+    const { query, productCount = 10 } = await request.json()
     
-    // Enhanced GraphQL query with more data
+    // Get products with 50 comments each
     const graphqlQuery = {
       query: `
         {
-          posts(first: 10, order: RANKING) {
+          posts(first: ${productCount}, order: RANKING) {
             edges {
               node {
                 id
@@ -22,6 +22,8 @@ export async function POST(request: Request) {
                 slug
                 commentsCount
                 reviewsRating
+                createdAt
+                featuredAt
                 topics {
                   edges {
                     node {
@@ -33,13 +35,15 @@ export async function POST(request: Request) {
                   name
                   headline
                 }
-                comments(first: 3) {
+                comments(first: 50, order: VOTES) {
                   edges {
                     node {
                       body
                       votesCount
+                      createdAt
                       user {
                         name
+                        headline
                       }
                     }
                   }
@@ -68,7 +72,7 @@ export async function POST(request: Request) {
       throw new Error(data.errors[0]?.message || 'GraphQL error')
     }
     
-    // Transform with all the data
+    // Transform with all data including 50 comments per product
     const products = data.data?.posts?.edges?.map((edge: any) => ({
       id: edge.node.id,
       name: edge.node.name,
@@ -79,19 +83,25 @@ export async function POST(request: Request) {
       reviewsRating: edge.node.reviewsRating || null,
       url: `https://www.producthunt.com/posts/${edge.node.slug}`,
       website: edge.node.website || '#',
+      createdAt: edge.node.createdAt,
+      featuredAt: edge.node.featuredAt,
       topics: edge.node.topics?.edges?.map((t: any) => t.node.name) || [],
       makers: edge.node.makers || [],
-      topComments: edge.node.comments?.edges?.map((c: any) => ({
+      comments: edge.node.comments?.edges?.map((c: any) => ({
         body: c.node.body,
         votes: c.node.votesCount,
-        user: c.node.user?.name || 'Anonymous'
+        createdAt: c.node.createdAt,
+        author: c.node.user?.name || 'Anonymous',
+        authorHeadline: c.node.user?.headline || ''
       })) || []
     })) || []
     
     return NextResponse.json({
       products: products,
       query: query,
-      source: 'Product Hunt Live Data'
+      source: 'Product Hunt Live Data',
+      timestamp: new Date().toISOString(),
+      commentsFetched: products.reduce((sum, p) => sum + p.comments.length, 0)
     })
   } catch (error: any) {
     console.error('Product Hunt API Error:', error)
