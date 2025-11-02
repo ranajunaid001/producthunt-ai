@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { ChatOpenAI } from '@langchain/openai'
 import { AgentExecutor, createOpenAIFunctionsAgent } from 'langchain/agents'
 import { ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts'
-import { productHuntTools } from '@/lib/productHuntTools'
+import { productHuntTools } from '../../../lib/productHuntTools'
 
 // Initialize LangSmith tracing
 if (process.env.LANGCHAIN_TRACING_V2) {
