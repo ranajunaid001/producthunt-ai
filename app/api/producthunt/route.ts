@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 
+const DEVELOPER_TOKEN = '9aiZygx2ZjK5NfLMBaTZq9IkfcYLaMEMK51CBxpIDpg'
+
 export async function POST(request: Request) {
   try {
     const { query } = await request.json()
     
-    // Use Product Hunt's actual GraphQL API
+    // GraphQL query to get today's top products
     const graphqlQuery = {
       query: `
         {
@@ -14,9 +16,17 @@ export async function POST(request: Request) {
                 id
                 name
                 tagline
+                description
                 votesCount
                 website
                 slug
+                topics {
+                  edges {
+                    node {
+                      name
+                    }
+                  }
+                }
               }
             }
           }
@@ -29,6 +39,7 @@ export async function POST(request: Request) {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        'Authorization': `Bearer ${DEVELOPER_TOKEN}`
       },
       body: JSON.stringify(graphqlQuery)
     })
@@ -36,49 +47,32 @@ export async function POST(request: Request) {
     const data = await response.json()
     
     if (data.errors) {
+      console.error('GraphQL errors:', data.errors)
       throw new Error(data.errors[0]?.message || 'GraphQL error')
     }
     
+    // Transform the data into a cleaner format
     const products = data.data?.posts?.edges?.map((edge: any) => ({
       id: edge.node.id,
       name: edge.node.name,
       tagline: edge.node.tagline,
+      description: edge.node.description,
       votesCount: edge.node.votesCount || 0,
       url: `https://www.producthunt.com/posts/${edge.node.slug}`,
-      website: edge.node.website || '#'
+      website: edge.node.website || '#',
+      topics: edge.node.topics?.edges?.map((t: any) => t.node.name) || []
     })) || []
     
     return NextResponse.json({
       products: products,
-      query: query
+      query: query,
+      source: 'Product Hunt Live Data'
     })
   } catch (error: any) {
     console.error('Product Hunt API Error:', error)
-    
-    // Return mock data as fallback
-    const mockProducts = [
-      {
-        id: '1',
-        name: 'Claude 3',
-        tagline: 'The most capable AI assistant',
-        votesCount: 523,
-        url: 'https://producthunt.com/products/claude-3',
-        website: 'https://claude.ai'
-      },
-      {
-        id: '2', 
-        name: 'Linear',
-        tagline: 'The new standard for modern software development',
-        votesCount: 412,
-        url: 'https://producthunt.com/products/linear',
-        website: 'https://linear.app'
-      }
-    ]
-    
-    return NextResponse.json({
-      products: mockProducts,
-      error: error.message,
-      mock: true
-    })
+    return NextResponse.json(
+      { error: 'Failed to fetch Product Hunt data', details: error.message },
+      { status: 500 }
+    )
   }
 }
