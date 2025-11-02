@@ -1,7 +1,34 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 
-// Tool 1: Get trending products (no comments needed)
+// Helper function to call Product Hunt GraphQL API
+async function callProductHuntAPI(query: string) {
+  const DEVELOPER_TOKEN = process.env.PRODUCTHUNT_TOKEN;
+  
+  if (!DEVELOPER_TOKEN) {
+    throw new Error('PRODUCTHUNT_TOKEN not configured');
+  }
+  
+  const response = await fetch('https://api.producthunt.com/v2/api/graphql', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Authorization': `Bearer ${DEVELOPER_TOKEN}`
+    },
+    body: JSON.stringify({ query })
+  });
+  
+  const data = await response.json();
+  
+  if (data.errors) {
+    throw new Error(data.errors[0]?.message || 'GraphQL error');
+  }
+  
+  return data;
+}
+
+// Tool 1: Get trending products
 export const getTrendingProductsTool = new DynamicStructuredTool({
   name: "get_trending_products",
   description: "Get today's top trending products from Product Hunt. Use this when user asks about popular, hot, trending, or top products.",
@@ -10,26 +37,36 @@ export const getTrendingProductsTool = new DynamicStructuredTool({
   }),
   func: async ({ limit }) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/producthunt`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productCount: limit })
-      });
+      const query = `{
+        posts(first: ${limit}, order: RANKING) {
+          edges {
+            node {
+              id
+              name
+              tagline
+              votesCount
+              commentsCount
+              topics {
+                edges {
+                  node {
+                    name
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`;
       
-      const data = await response.json();
+      const data = await callProductHuntAPI(query);
       
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch products');
-      }
-      
-      // Return simplified data for the agent
-      const products = data.products.map((p: any) => ({
-        name: p.name,
-        tagline: p.tagline,
-        votes: p.votesCount,
-        commentsCount: p.commentsCount,
-        topics: p.topics
-      }));
+      const products = data.data?.posts?.edges?.map((edge: any) => ({
+        name: edge.node.name,
+        tagline: edge.node.tagline,
+        votes: edge.node.votesCount,
+        commentsCount: edge.node.commentsCount,
+        topics: edge.node.topics?.edges?.map((t: any) => t.node.name) || []
+      })) || [];
       
       return JSON.stringify(products);
     } catch (error) {
@@ -48,24 +85,35 @@ export const searchProductsTool = new DynamicStructuredTool({
   }),
   func: async ({ keywords, limit }) => {
     try {
-      // First get all products, then filter
-      // In a real implementation, you'd modify the GraphQL query to search
-      const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/producthunt`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productCount: 20 }) // Get more to filter from
-      });
+      // Get more products to filter through
+      const query = `{
+        posts(first: 20, order: RANKING) {
+          edges {
+            node {
+              id
+              name
+              tagline
+              description
+              votesCount
+              topics {
+                edges {
+                  node {
+                    name
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`;
       
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch products');
-      }
+      const data = await callProductHuntAPI(query);
       
       // Filter products based on keywords
       const keywordLower = keywords.toLowerCase();
-      const filteredProducts = data.products.filter((p: any) => {
-        const searchText = `${p.name} ${p.tagline} ${p.description} ${p.topics.join(' ')}`.toLowerCase();
+      const filteredProducts = data.data?.posts?.edges?.filter((edge: any) => {
+        const node = edge.node;
+        const searchText = `${node.name} ${node.tagline} ${node.description || ''} ${node.topics?.edges?.map((t: any) => t.node.name).join(' ') || ''}`.toLowerCase();
         return searchText.includes(keywordLower);
       }).slice(0, limit);
       
@@ -73,11 +121,11 @@ export const searchProductsTool = new DynamicStructuredTool({
         return `No products found for keywords: ${keywords}`;
       }
       
-      const products = filteredProducts.map((p: any) => ({
-        name: p.name,
-        tagline: p.tagline,
-        votes: p.votesCount,
-        topics: p.topics
+      const products = filteredProducts.map((edge: any) => ({
+        name: edge.node.name,
+        tagline: edge.node.tagline,
+        votes: edge.node.votesCount,
+        topics: edge.node.topics?.edges?.map((t: any) => t.node.name) || []
       }));
       
       return JSON.stringify(products);
@@ -96,43 +144,73 @@ export const getProductDetailsTool = new DynamicStructuredTool({
   }),
   func: async ({ productName }) => {
     try {
-      // First get products to find the specific one
-      const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/producthunt`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productCount: 10 })
-      });
+      // Get products with comments
+      const query = `{
+        posts(first: 10, order: RANKING) {
+          edges {
+            node {
+              id
+              name
+              tagline
+              description
+              votesCount
+              website
+              slug
+              commentsCount
+              topics {
+                edges {
+                  node {
+                    name
+                  }
+                }
+              }
+              makers {
+                name
+                headline
+              }
+              comments(first: 10) {
+                edges {
+                  node {
+                    body
+                    votesCount
+                    user {
+                      name
+                      headline
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`;
       
-      const data = await response.json();
+      const data = await callProductHuntAPI(query);
       
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch products');
-      }
-      
-      // Find the product by name (case insensitive)
-      const product = data.products.find((p: any) => 
-        p.name.toLowerCase().includes(productName.toLowerCase())
+      // Find the product by name
+      const product = data.data?.posts?.edges?.find((edge: any) => 
+        edge.node.name.toLowerCase().includes(productName.toLowerCase())
       );
       
       if (!product) {
         return `Product "${productName}" not found in today's products`;
       }
       
-      // Return detailed info including comments
+      const node = product.node;
       return JSON.stringify({
-        name: product.name,
-        tagline: product.tagline,
-        description: product.description,
-        votes: product.votesCount,
-        website: product.website,
-        topics: product.topics,
-        makers: product.makers,
-        commentsCount: product.commentsCount,
-        comments: product.comments.map((c: any) => ({
-          text: c.body,
-          votes: c.votes,
-          author: c.author
-        }))
+        name: node.name,
+        tagline: node.tagline,
+        description: node.description,
+        votes: node.votesCount,
+        website: node.website,
+        topics: node.topics?.edges?.map((t: any) => t.node.name) || [],
+        makers: node.makers || [],
+        commentsCount: node.commentsCount,
+        comments: node.comments?.edges?.map((c: any) => ({
+          text: c.node.body,
+          votes: c.node.votesCount,
+          author: c.node.user?.name || 'Anonymous'
+        })) || []
       });
     } catch (error) {
       return `Error fetching product details: ${error.message}`;
@@ -156,9 +234,9 @@ export const analyzeCommentsTool = new DynamicStructuredTool({
       return "No comments to analyze";
     }
     
-    // Group comments by sentiment based on content
-    const positiveKeywords = ['love', 'great', 'excellent', 'amazing', 'fantastic', 'useful', 'helpful', 'brilliant', 'recommend'];
-    const negativeKeywords = ['hate', 'bad', 'poor', 'terrible', 'useless', 'waste', 'disappointed', 'frustrating'];
+    // Simple sentiment analysis
+    const positiveKeywords = ['love', 'great', 'excellent', 'amazing', 'fantastic', 'useful', 'helpful', 'brilliant', 'recommend', 'best', 'awesome'];
+    const negativeKeywords = ['hate', 'bad', 'poor', 'terrible', 'useless', 'waste', 'disappointed', 'frustrating', 'worst', 'avoid'];
     
     const analysis = {
       totalComments: comments.length,
@@ -200,7 +278,7 @@ export const analyzeCommentsTool = new DynamicStructuredTool({
   },
 });
 
-// Export all tools as an array
+// Export all tools
 export const productHuntTools = [
   getTrendingProductsTool,
   searchProductsTool,
