@@ -2,46 +2,67 @@ import { NextResponse } from 'next/server'
 
 export async function POST(request: Request) {
   try {
-    const { query } = await request.json()
+    const { query, date } = await request.json()
     
-    // Return mock data for now to test the connection
+    // We'll scrape the public Product Hunt API that their website uses
+    // This endpoint is public and doesn't require authentication
+    const today = new Date().toISOString().split('T')[0]
+    const apiUrl = `https://www.producthunt.com/frontend/daily_feed?date=${date || today}`
+    
+    console.log('Fetching from:', apiUrl)
+    
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    })
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    
+    const data = await response.json()
+    
+    // Extract products from the response
+    const products = data.data?.edges?.map((edge: any) => ({
+      id: edge.node.id,
+      name: edge.node.name,
+      tagline: edge.node.tagline,
+      votesCount: edge.node.votesCount || 0,
+      url: `https://www.producthunt.com/posts/${edge.node.slug}`,
+      website: edge.node.website || '#',
+      thumbnail: edge.node.thumbnail?.url,
+      topics: edge.node.topics?.map((t: any) => t.name) || []
+    })) || []
+    
+    return NextResponse.json({
+      products: products.slice(0, 10), // Return top 10
+      query: query,
+      date: date || today,
+      count: products.length
+    })
+  } catch (error) {
+    console.error('Product Hunt API Error:', error)
+    
+    // If real API fails, return mock data so the app still works
     const mockProducts = [
       {
         id: '1',
-        name: 'Claude 3',
-        tagline: 'The most capable AI assistant',
-        votesCount: 523,
-        url: 'https://producthunt.com/products/claude-3',
-        website: 'https://claude.ai'
-      },
-      {
-        id: '2',
-        name: 'Linear',
-        tagline: 'The new standard for modern software development',
-        votesCount: 412,
-        url: 'https://producthunt.com/products/linear',
-        website: 'https://linear.app'
-      },
-      {
-        id: '3',
-        name: 'Cursor',
-        tagline: 'The AI-first code editor',
-        votesCount: 389,
-        url: 'https://producthunt.com/products/cursor',
-        website: 'https://cursor.sh'
+        name: 'Error fetching real data',
+        tagline: 'Using mock data instead. Error: ' + error.message,
+        votesCount: 0,
+        url: '#',
+        website: '#'
       }
     ]
     
     return NextResponse.json({
       products: mockProducts,
       query: query,
-      mock: true // indicator that this is mock data
+      error: error.message,
+      mock: true
     })
-  } catch (error) {
-    console.error('Error:', error)
-    return NextResponse.json(
-      { error: 'Failed to process request' },
-      { status: 500 }
-    )
   }
 }
