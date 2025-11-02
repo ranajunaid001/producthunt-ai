@@ -1,0 +1,44 @@
+import { Client } from 'langsmith'
+
+// Initialize LangSmith client
+export const langsmithClient = new Client({
+  apiUrl: process.env.LANGCHAIN_ENDPOINT,
+  apiKey: process.env.LANGCHAIN_API_KEY,
+})
+
+// Wrapper function to trace OpenAI calls
+export async function traceLLMCall<T>(
+  name: string,
+  fn: () => Promise<T>,
+  metadata?: Record<string, any>
+): Promise<T> {
+  if (process.env.LANGCHAIN_TRACING_V2 !== 'true') {
+    // If tracing is disabled, just run the function
+    return fn()
+  }
+
+  const runTree = await langsmithClient.createRun({
+    name,
+    run_type: 'llm',
+    project_name: process.env.LANGCHAIN_PROJECT,
+    inputs: metadata?.inputs || {},
+    extra: metadata || {},
+  })
+
+  try {
+    const result = await fn()
+    
+    await langsmithClient.updateRun(runTree.id, {
+      outputs: { result },
+      end_time: new Date().toISOString(),
+    })
+    
+    return result
+  } catch (error) {
+    await langsmithClient.updateRun(runTree.id, {
+      error: String(error),
+      end_time: new Date().toISOString(),
+    })
+    throw error
+  }
+}
