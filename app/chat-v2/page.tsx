@@ -9,7 +9,7 @@ import {
   type Product,
   type SentimentData,
   type AgentResponse
-} from '@/lib/productHuntHelpers'
+} from '../../lib/productHuntHelpers'
 
 export default function ChatV2() {
   const [query, setQuery] = useState('')
