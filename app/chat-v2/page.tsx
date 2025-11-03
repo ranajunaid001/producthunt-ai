@@ -38,6 +38,26 @@ function parseProductsFromText(text: string): Product[] {
   let currentProduct: Partial<Product> = {}
   let currentTopics: string[] = []
   
+  // Check if it's describing a single "hottest" product
+  const singleProductMatch = text.match(/hottest product.*?is\s+\*\*(.*?)\*\*/i)
+  if (singleProductMatch) {
+    const name = singleProductMatch[1]
+    const taglineMatch = text.match(/which is an?\s+(.*?)(?:\.|,)/i)
+    const votesMatch = text.match(/(\d+)\s+votes/i)
+    const commentsMatch = text.match(/(\d+)\s+comments/i)
+    
+    if (name) {
+      products.push({
+        name: name,
+        tagline: taglineMatch ? taglineMatch[1] : '',
+        votes: votesMatch ? parseInt(votesMatch[1]) : 0,
+        comments: commentsMatch ? parseInt(commentsMatch[1]) : 0,
+        topics: []
+      })
+      return products
+    }
+  }
+  
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim()
     
@@ -55,28 +75,31 @@ function parseProductsFromText(text: string): Product[] {
       continue
     }
     
-    // Match tagline
+    // Match tagline - remove any leading stars
     if (line.includes('Tagline:') || line.includes('tagline:')) {
-      currentProduct.tagline = line.split(/[Tt]agline:/)[1]?.trim()
+      const tagline = line.split(/[Tt]agline:/)[1]?.trim()
+      currentProduct.tagline = tagline?.replace(/^\*\*\s*/, '').replace(/\*\*$/, '')
       continue
+    }
+    
+    // For inline taglines after dash
+    if (line.includes(' - ') && currentProduct.name && !currentProduct.tagline) {
+      const parts = line.split(' - ')
+      if (parts.length > 1) {
+        currentProduct.tagline = parts[1].replace(/^\*\*\s*/, '').replace(/\*\*$/, '').trim()
+      }
     }
     
     // Match votes
-    if (line.includes('Votes:') || line.includes('votes:')) {
-      const votesMatch = line.match(/(\d+)/)
-      if (votesMatch) {
-        currentProduct.votes = parseInt(votesMatch[1])
-      }
-      continue
+    const votesMatch = line.match(/(\d+)\s+votes?/i)
+    if (votesMatch) {
+      currentProduct.votes = parseInt(votesMatch[1])
     }
     
     // Match comments
-    if (line.includes('Comments') || line.includes('comments')) {
-      const commentsMatch = line.match(/(\d+)/)
-      if (commentsMatch) {
-        currentProduct.comments = parseInt(commentsMatch[1])
-      }
-      continue
+    const commentsMatch = line.match(/(\d+)\s+comments?/i)
+    if (commentsMatch) {
+      currentProduct.comments = parseInt(commentsMatch[1])
     }
     
     // Match topics
@@ -192,9 +215,24 @@ export default function ChatV2() {
       // Parse the agent's text response to extract structured data
       const answerLower = data.answer.toLowerCase()
       
-      // Determine response type and parse accordingly
-      if (answerLower.includes('trending') || answerLower.includes('top') || 
-          answerLower.includes('here are') || answerLower.includes('products')) {
+      // Check if it's describing a single product or multiple products
+      if (answerLower.includes('hottest product') || answerLower.includes('best product') || 
+          (answerLower.includes('is') && !answerLower.includes('are'))) {
+        
+        const products = parseProductsFromText(data.answer)
+        if (products.length === 1) {
+          // Single product view
+          data.responseType = 'single-product'
+          data.data = { product: products[0] }
+        } else if (products.length > 1) {
+          data.responseType = 'products'
+          data.data = { products }
+        } else {
+          data.responseType = 'general'
+        }
+        
+      } else if (answerLower.includes('trending') || answerLower.includes('products') || 
+                 answerLower.includes('here are') || answerLower.includes('launched')) {
         
         const products = parseProductsFromText(data.answer)
         if (products.length > 0) {
@@ -242,6 +280,11 @@ export default function ChatV2() {
   const handleExampleClick = (exampleQuery: string) => {
     setQuery(exampleQuery)
     performSearch(exampleQuery)
+  }
+
+  const handleProductClick = (productName: string) => {
+    const query = `What do people think about ${productName}?`
+    performSearch(query)
   }
 
   const goHome = () => {
@@ -367,7 +410,7 @@ export default function ChatV2() {
           </button>
           
           <button
-            onClick={() => handleExampleClick("Show me AI tools")}
+            onClick={() => handleExampleClick("What's the best product launched today?")}
             disabled={loading}
             style={{
               padding: '10px 20px',
@@ -394,11 +437,11 @@ export default function ChatV2() {
               e.currentTarget.style.borderColor = '#d2d2d7'
             }}
           >
-            Show me AI tools
+            Best product today?
           </button>
           
           <button
-            onClick={() => handleExampleClick("What do people think about Maillayer?")}
+            onClick={() => handleExampleClick("Show me AI automation products")}
             disabled={loading}
             style={{
               padding: '10px 20px',
@@ -425,7 +468,7 @@ export default function ChatV2() {
               e.currentTarget.style.borderColor = '#d2d2d7'
             }}
           >
-            Analyze sentiment
+            AI automation products
           </button>
         </div>
         
@@ -498,6 +541,7 @@ export default function ChatV2() {
               {response.data.products.map((product, idx) => (
                 <article
                   key={idx}
+                  onClick={() => handleProductClick(product.name)}
                   style={{
                     background: 'rgba(255, 97, 84, 0.03)',
                     padding: '24px',
@@ -568,6 +612,91 @@ export default function ChatV2() {
                   )}
                 </article>
               ))}
+            </div>
+          )}
+          
+          {response.responseType === 'single-product' && response.data?.product && (
+            <div style={{ maxWidth: '720px', margin: '0 auto', textAlign: 'center' }}>
+              <h1 style={{
+                fontSize: '48px',
+                fontWeight: 600,
+                letterSpacing: '-0.003em',
+                marginBottom: '12px',
+              }}>
+                {response.data.product.name}
+              </h1>
+              <p style={{
+                fontSize: '21px',
+                color: '#86868b',
+                marginBottom: '40px',
+              }}>
+                {response.data.product.tagline}
+              </p>
+              
+              <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                gap: '60px',
+                margin: '40px 0',
+              }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{
+                    fontSize: '64px',
+                    fontWeight: 600,
+                    color: '#FF6154',
+                  }}>
+                    {response.data.product.votes}
+                  </div>
+                  <div style={{
+                    fontSize: '13px',
+                    color: '#86868b',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                  }}>
+                    Votes
+                  </div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{
+                    fontSize: '64px',
+                    fontWeight: 600,
+                    color: '#FF6154',
+                  }}>
+                    {response.data.product.comments}
+                  </div>
+                  <div style={{
+                    fontSize: '13px',
+                    color: '#86868b',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                  }}>
+                    Comments
+                  </div>
+                </div>
+              </div>
+              
+              <button
+                onClick={() => handleProductClick(response.data.product!.name)}
+                style={{
+                  padding: '12px 32px',
+                  fontSize: '15px',
+                  background: '#FF6154',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '22px',
+                  cursor: 'pointer',
+                  transition: 'opacity 0.3s ease',
+                  marginTop: '20px',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.opacity = '0.85'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.opacity = '1'
+                }}
+              >
+                View Sentiment Analysis
+              </button>
             </div>
           )}
           
