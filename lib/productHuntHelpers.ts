@@ -33,92 +33,112 @@ export interface AgentResponse {
 export function parseProductsFromText(text: string): Product[] {
   const products: Product[] = []
   
-  // Format 1: "The best/hottest product is **Name**"
+  // Format 1: Single product "best/hottest"
   const singleMatch = text.match(/(?:best|hottest)\s+product.*?is\s+\*\*(.*?)\*\*/i)
   if (singleMatch) {
     const name = singleMatch[1]
-    const votesMatch = text.match(/[Vv]otes[:\s]+(\d+)/i)
-    const commentsMatch = text.match(/[Cc]omments.*?[:\s]+(\d+)/i)
-    const descMatch = text.match(/(?:focuses on|provides?|which is an?)\s+(.*?)(?:\.|,)/i)
+    
+    // Look for all numbers in text and match with votes/comments
+    const numbers = text.match(/\d+/g) || []
+    let votes = 0, comments = 0
+    
+    // Find votes - look for number before/after "votes"
+    const votesIndex = text.toLowerCase().indexOf('vote')
+    if (votesIndex > -1) {
+      const beforeVotes = text.substring(Math.max(0, votesIndex - 20), votesIndex)
+      const votesMatch = beforeVotes.match(/(\d+)(?!.*\d)/) || text.substring(votesIndex, votesIndex + 20).match(/(\d+)/)
+      votes = votesMatch ? parseInt(votesMatch[1]) : 0
+    }
+    
+    // Find comments - look for number before/after "comments"
+    const commentsIndex = text.toLowerCase().indexOf('comment')
+    if (commentsIndex > -1) {
+      const beforeComments = text.substring(Math.max(0, commentsIndex - 20), commentsIndex)
+      const commentsMatch = beforeComments.match(/(\d+)(?!.*\d)/) || text.substring(commentsIndex, commentsIndex + 20).match(/(\d+)/)
+      comments = commentsMatch ? parseInt(commentsMatch[1]) : 0
+    }
+    
+    // Extract description/tagline
+    const descPatterns = [
+      /focusing on\s+(.*?)(?:\.|,|\n|$)/i,
+      /provides?\s+(.*?)(?:\.|,|\n|$)/i,
+      /which is an?\s+(.*?)(?:\.|,|\n|$)/i,
+      /that\s+(.*?)(?:\.|,|\n|$)/i,
+      /It\s+(.*?)(?:\.|,|\n|$)/i
+    ]
+    
+    let tagline = ''
+    for (const pattern of descPatterns) {
+      const match = text.match(pattern)
+      if (match && match[1]) {
+        tagline = match[1].trim()
+        break
+      }
+    }
     
     return [{
       name,
-      tagline: descMatch?.[1] || '',
-      votes: parseInt(votesMatch?.[1] || '0'),
-      comments: parseInt(commentsMatch?.[1] || '0'),
+      tagline,
+      votes,
+      comments,
       topics: []
     }]
   }
   
-  // Format 2: Numbered list "1. **Name**"
-  const lines = text.split('\n')
-  let currentProduct: Partial<Product> = {}
+  // Format 2: Multiple products list
+  const productBlocks = text.split(/\n(?=\d+\.)/);
   
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim()
+  for (const block of productBlocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(l => l)
     
-    // New product line
-    const nameMatch = line.match(/^\d+\.\s*\*\*(.*?)\*\*/)
-    if (nameMatch) {
-      if (currentProduct.name) {
-        // Save previous product with defaults for missing values
-        products.push({
-          name: currentProduct.name,
-          tagline: currentProduct.tagline || '',
-          votes: currentProduct.votes || 0,
-          comments: currentProduct.comments || 0,
-          topics: currentProduct.topics || []
-        })
-      }
-      currentProduct = { name: nameMatch[1] }
+    // Extract product name
+    const nameMatch = lines[0]?.match(/^\d+\.\s*\*\*(.*?)\*\*/)
+    if (!nameMatch) continue
+    
+    const product: Product = {
+      name: nameMatch[1],
+      tagline: '',
+      votes: 0,
+      comments: 0,
+      topics: []
+    }
+    
+    // Process each line
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i]
       
-      // Check if tagline is on same line after dash
-      const dashMatch = line.match(/\*\*.*?[-–]\s*(.+)/)
-      if (dashMatch) {
-        currentProduct.tagline = dashMatch[1].replace(/\*/g, '').trim()
+      // Tagline (usually second line or after dash)
+      if (i === 1 && !line.includes(':') && !line.match(/\d+\s*(votes?|comments?)/i)) {
+        product.tagline = line.replace(/^[-–]\s*/, '').replace(/\*\*/g, '').trim()
+      } else if (line.startsWith('Tagline:')) {
+        product.tagline = line.substring(8).replace(/\*\*/g, '').trim()
+      }
+      
+      // Votes
+      if (line.toLowerCase().includes('vote')) {
+        const match = line.match(/(\d+)/)
+        if (match) product.votes = parseInt(match[1])
+      }
+      
+      // Comments
+      if (line.toLowerCase().includes('comment') && !line.toLowerCase().includes('vote')) {
+        const match = line.match(/(\d+)/)
+        if (match) product.comments = parseInt(match[1])
+      }
+      
+      // Topics
+      if (line.toLowerCase().includes('topic')) {
+        const topicsText = line.split(/topics?:/i)[1]?.trim()
+        if (topicsText) {
+          product.topics = topicsText
+            .split(/[,，]/)
+            .map(t => t.replace(/\*\*/g, '').trim())
+            .filter(t => t && t !== 'undefined')
+        }
       }
     }
     
-    // Tagline on next line
-    else if (line.match(/^[-–]\s*\*\*(.+)\*\*/) || line.match(/[Tt]agline:\s*\*\*(.+)\*\*/)) {
-      const taglineMatch = line.match(/\*\*(.+?)\*\*/)
-      if (taglineMatch && currentProduct.name) {
-        currentProduct.tagline = taglineMatch[1].replace(/\*/g, '').trim()
-      }
-    }
-    
-    // Extract votes and comments (more flexible)
-    if (currentProduct.name) {
-      const votesMatch = line.match(/(\d+)\s*votes?/i)
-      const commentsMatch = line.match(/(\d+)\s*comments?/i)
-      
-      if (votesMatch && !currentProduct.votes) {
-        currentProduct.votes = parseInt(votesMatch[1])
-      }
-      if (commentsMatch && !currentProduct.comments) {
-        currentProduct.comments = parseInt(commentsMatch[1])
-      }
-      
-      // Topics - remove all asterisks
-      const topicsMatch = line.match(/[Tt]opics?:\s*(.+)/)
-      if (topicsMatch) {
-        currentProduct.topics = topicsMatch[1]
-          .split(',')
-          .map(t => t.replace(/\*/g, '').trim())
-          .filter(t => t.length > 0)
-      }
-    }
-  }
-  
-  // Don't forget last product
-  if (currentProduct.name) {
-    products.push({
-      name: currentProduct.name,
-      tagline: currentProduct.tagline || '',
-      votes: currentProduct.votes || 0,
-      comments: currentProduct.comments || 0,
-      topics: currentProduct.topics || []
-    })
+    products.push(product)
   }
   
   return products
@@ -130,82 +150,92 @@ export function parseSentimentFromText(text: string): SentimentData | null {
   let productName = ''
   const namePatterns = [
     /^(.*?)\s+has received/i,
-    /sentiment for\s+["']?(.+?)["']?/i,
-    /about\s+["']?(.+?)["']?\s*:/i,
-    /^(.*?)\s+sentiment analysis/i
+    /sentiment for\s+["']?([^"'\n]+?)["']?/i,
+    /about\s+["']?([^"'\n]+?)["']?\s*[:，]/i,
+    /^(.*?)\s+sentiment analysis/i,
+    /feedback from users about\s+["']?([^"'\n]+?)["']?/i
   ]
   
   for (const pattern of namePatterns) {
     const match = text.match(pattern)
-    if (match) {
+    if (match && match[1]) {
       productName = match[1].trim()
       break
     }
   }
   
   // Calculate score from counts
-  const posMatch = text.match(/[Pp]ositive.*?[:\s]+(\d+)/i)
-  const negMatch = text.match(/[Nn]egative.*?[:\s]+(\d+)/i)
-  const neutralMatch = text.match(/[Nn]eutral.*?[:\s]+(\d+)/i)
+  const posMatch = text.match(/[Pp]ositive\s*(?:[Cc]omments?|[Ff]eedback)?[:\s]*(\d+)/i)
+  const negMatch = text.match(/[Nn]egative\s*(?:[Cc]omments?|[Ff]eedback)?[:\s]*(\d+)/i)
+  const neutralMatch = text.match(/[Nn]eutral\s*(?:[Cc]omments?|[Ii]nquiries)?[:\s]*(\d+)/i)
   
   const posCount = parseInt(posMatch?.[1] || '0')
   const negCount = parseInt(negMatch?.[1] || '0')
   const neutralCount = parseInt(neutralMatch?.[1] || '0')
   const total = posCount + negCount + neutralCount
   
-  const score = total > 0 ? Math.round((posCount / total) * 100) : 0
+  const score = total > 0 ? Math.round((posCount / total) * 100) : 75
   
-  // Extract feedback quotes
+  // Extract feedback quotes - better regex
   const positive: string[] = []
   const negative: string[] = []
   
-  // Find all quoted text
-  const quotes: RegExpMatchArray[] = []
-  const quoteRegex = /[""]([^""]+)[""]|saying,\s*[""]([^""]+)[""]|stated,\s*[""]([^""]+)[""]|:\s*[""]([^""]+)[""]|•\s*[""]([^""]+)[""]|-\s*[""]([^""]+)[""]|(\d+\.\s*[""][^""]+[""])/g
-  let match
-  while ((match = quoteRegex.exec(text)) !== null) {
-  quotes.push(match)
-  }
+  // Find sections
+  const sections = text.split(/(?=[A-Z][\w\s]+:)/);
   
-  // Simple heuristic: first half are positive, second half negative
-  // Or look for section markers
-  let inPositiveSection = text.toLowerCase().indexOf('positive') < text.toLowerCase().indexOf('negative')
-  
-  quotes.forEach(match => {
-    const quote = (match[1] || match[2] || match[3] || match[4] || match[5] || match[6] || match[7] || '').trim()
-    if (quote && quote.length > 20) {
-      if (inPositiveSection && positive.length < 3) {
-        positive.push(quote)
-      } else if (!inPositiveSection && negative.length < 2) {
-        negative.push(quote)
+  for (const section of sections) {
+    const isPositive = section.toLowerCase().includes('positive')
+    const isNegative = section.toLowerCase().includes('negative') || section.toLowerCase().includes('improve')
+    
+    if (!isPositive && !isNegative) continue
+    
+    // Extract quotes with multiple patterns
+    const quotePatterns = [
+      /[""]([^""]{20,}?)[""](?:\s|$|,|\.|;)/g,
+      /stating,?\s*[""]([^""]+?)[""](?:\s|$|,|\.|;)/g,
+      /said,?\s*[""]([^""]+?)[""](?:\s|$|,|\.|;)/g,
+      /[-•]\s*(?:One user\s*)?(?:expressed|stated|said|mentioned)?\s*[""]?([^"""\n]{20,})[""]?(?:\s|$|,|\.|;)/g
+    ]
+    
+    for (const pattern of quotePatterns) {
+      let match
+      const regex = new RegExp(pattern.source, pattern.flags)
+      while ((match = regex.exec(section)) !== null) {
+        const quote = match[1].trim()
+        if (quote.length > 20 && quote.length < 300) {
+          if (isPositive && positive.length < 3) {
+            positive.push(quote)
+          } else if (isNegative && negative.length < 2) {
+            negative.push(quote)
+          }
+        }
       }
-      // Switch sections if we have enough
-      if (positive.length >= 3) inPositiveSection = false
     }
-  })
-  
-  // If no quotes found, look for bullet points
-  if (positive.length === 0 && negative.length === 0) {
-  const bulletMatches = text.match(/[-•]\s*(.+?)(?=[-•\n]|$)/g)
-  if (bulletMatches) {
-    bulletMatches.forEach((point, i) => {
-      const cleaned = point.replace(/^[-•]\s*/, '').trim()
-      if (cleaned.length > 10) {
-        if (i < bulletMatches.length / 2) positive.push(cleaned)
-        else negative.push(cleaned)
+    
+    // Also try bullet points
+    const bulletMatches = section.match(/(?:[-•]\s*|^\d+\.\s*)([^-•\n]{20,})/gm)
+    if (bulletMatches && (positive.length === 0 || negative.length === 0)) {
+      bulletMatches.forEach(bullet => {
+        const cleaned = bullet.replace(/^[-•\d+.\s]*/, '').trim()
+        if (cleaned.length > 20 && cleaned.length < 300) {
+          if (isPositive && positive.length < 3) {
+            positive.push(cleaned)
+          } else if (isNegative && negative.length < 2) {
+            negative.push(cleaned)
+          }
         }
       })
     }
   }
   
-  const analyzedComments = parseInt(text.match(/(\d+)\s+comments?\s+analyzed/i)?.[1] || String(total))
+  const analyzedComments = total || parseInt(text.match(/(\d+)\s+comments?\s+analyzed/i)?.[1] || '10')
   
-  return productName && (score > 0 || positive.length > 0) ? {
+  return productName ? {
     product: productName,
-    score: score || 75, // Default to 75% if we can't calculate
-    positive: positive.slice(0, 3),
-    negative: negative.slice(0, 2),
-    analyzedComments: analyzedComments || total || 10
+    score,
+    positive: positive.filter(p => !p.includes('Positive') && !p.includes('Negative')),
+    negative: negative.filter(n => !n.includes('Positive') && !n.includes('Negative')),
+    analyzedComments
   } : null
 }
 
@@ -221,14 +251,20 @@ export function detectResponseType(answer: string): AgentResponse['responseType'
   
   // Multiple products indicators
   if (lower.includes('trending') || lower.includes('here are') || 
-      lower.includes('products') || lower.includes('launched')) {
+      lower.includes('products launched') || lower.includes('top products')) {
     return 'products'
   }
   
   // Sentiment indicators
   if (lower.includes('sentiment') || lower.includes('% positive') || 
-      lower.includes('feedback') || lower.includes('users think')) {
+      lower.includes('feedback') || lower.includes('users think') ||
+      lower.includes('positive comments') || lower.includes('negative comments')) {
     return 'sentiment'
+  }
+  
+  // Check if it's a numbered list
+  if (answer.match(/^\d+\.\s*\*\*/m)) {
+    return 'products'
   }
   
   return 'general'
