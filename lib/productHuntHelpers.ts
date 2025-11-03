@@ -64,7 +64,8 @@ export function parseProductsFromText(text: string): Product[] {
       /provides?\s+(.*?)(?:\.|,|\n|$)/i,
       /which is an?\s+(.*?)(?:\.|,|\n|$)/i,
       /that\s+(.*?)(?:\.|,|\n|$)/i,
-      /It\s+(.*?)(?:\.|,|\n|$)/i
+      /It\s+(.*?)(?:\.|,|\n|Here)/i,
+      /allows?\s+(.*?)(?:\.|,|\n|$)/i
     ]
     
     let tagline = ''
@@ -104,14 +105,26 @@ export function parseProductsFromText(text: string): Product[] {
     }
     
     // Process each line
-    for (let i = 1; i < lines.length; i++) {
+    for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
+      const nextLine = lines[i + 1] || ''
       
-      // Tagline (usually second line or after dash)
-      if (i === 1 && !line.includes(':') && !line.match(/\d+\s*(votes?|comments?)/i)) {
-        product.tagline = line.replace(/^[-–]\s*/, '').replace(/\*\*/g, '').trim()
-      } else if (line.startsWith('Tagline:')) {
-        product.tagline = line.substring(8).replace(/\*\*/g, '').trim()
+      // Look for tagline in multiple places
+      // 1. Line after product name (most common)
+      if (i === 0 && nextLine && !nextLine.includes(':') && !nextLine.match(/\d+\s*(votes?|comments?)/i)) {
+        // Check line after product name
+        product.tagline = nextLine.replace(/^[-–]\s*/, '').replace(/\*\*/g, '').trim()
+      }
+      
+      // 2. After "Tagline:"
+      if (line.toLowerCase().includes('tagline:')) {
+        product.tagline = line.substring(line.indexOf(':') + 1).replace(/\*\*/g, '').trim()
+      }
+      
+      // 3. After dash on same line as product
+      if (i === 0 && line.includes(' - ')) {
+        const dashPart = line.substring(line.indexOf(' - ') + 3).replace(/\*\*/g, '').trim()
+        if (dashPart) product.tagline = dashPart
       }
       
       // Votes
@@ -128,13 +141,20 @@ export function parseProductsFromText(text: string): Product[] {
       
       // Topics
       if (line.toLowerCase().includes('topic')) {
-        const topicsText = line.split(/topics?:/i)[1]?.trim()
-        if (topicsText) {
-          product.topics = topicsText
-            .split(/[,，]/)
-            .map(t => t.replace(/\*\*/g, '').trim())
-            .filter(t => t && t !== 'undefined')
-        }
+        const topicsText = line.split(/topics?:/i)[1]?.trim() || ''
+        product.topics = topicsText
+          .split(/[,，]/)
+          .map(t => t.replace(/\*\*/g, '').trim())
+          .filter(t => t && t !== 'undefined' && t.length > 0)
+      }
+    }
+    
+    // If no tagline found, try to extract from the block
+    if (!product.tagline) {
+      const blockText = block.replace(/^\d+\.\s*\*\*.*?\*\*/, '').trim()
+      const firstSentence = blockText.match(/^([^.!?\n]+)/)
+      if (firstSentence && !firstSentence[1].includes(':')) {
+        product.tagline = firstSentence[1].replace(/^[-–]\s*/, '').trim()
       }
     }
     
@@ -148,83 +168,87 @@ export function parseProductsFromText(text: string): Product[] {
 export function parseSentimentFromText(text: string): SentimentData | null {
   // Extract product name
   let productName = ''
-  const namePatterns = [
-    /^(.*?)\s+has received/i,
-    /sentiment for\s+["']?([^"'\n]+?)["']?/i,
-    /about\s+["']?([^"'\n]+?)["']?\s*[:，]/i,
-    /^(.*?)\s+sentiment analysis/i,
-    /feedback from users about\s+["']?([^"'\n]+?)["']?/i
-  ]
+  const nameMatch = text.match(/^(.*?)\s+(?:has received|sentiment)/i) || 
+                    text.match(/about\s+["']?([^"'\n]+?)["']?/i) ||
+                    text.match(/feedback.*?for\s+["']?([^"'\n]+?)["']?/i)
+  productName = nameMatch?.[1]?.trim() || ''
   
-  for (const pattern of namePatterns) {
-    const match = text.match(pattern)
-    if (match && match[1]) {
-      productName = match[1].trim()
-      break
-    }
-  }
-  
-  // Calculate score from counts
-  const posMatch = text.match(/[Pp]ositive\s*(?:[Cc]omments?|[Ff]eedback)?[:\s]*(\d+)/i)
-  const negMatch = text.match(/[Nn]egative\s*(?:[Cc]omments?|[Ff]eedback)?[:\s]*(\d+)/i)
-  const neutralMatch = text.match(/[Nn]eutral\s*(?:[Cc]omments?|[Ii]nquiries)?[:\s]*(\d+)/i)
-  
+  // Calculate score
+  const posMatch = text.match(/[Pp]ositive.*?:\s*(\d+)/i)
+  const negMatch = text.match(/[Nn]egative.*?:\s*(\d+)/i)
   const posCount = parseInt(posMatch?.[1] || '0')
   const negCount = parseInt(negMatch?.[1] || '0')
-  const neutralCount = parseInt(neutralMatch?.[1] || '0')
-  const total = posCount + negCount + neutralCount
+  const total = posCount + negCount + (parseInt(text.match(/[Nn]eutral.*?:\s*(\d+)/i)?.[1] || '0'))
+  const score = total > 0 ? Math.round((posCount / total) * 100) : 85
   
-  const score = total > 0 ? Math.round((posCount / total) * 100) : 75
-  
-  // Extract feedback quotes - better regex
+  // Extract actual feedback content
   const positive: string[] = []
   const negative: string[] = []
   
-  // Find sections
-  const sections = text.split(/(?=[A-Z][\w\s]+:)/);
+  // Split text into sections
+  const lines = text.split('\n')
+  let inPositiveSection = false
+  let inNegativeSection = false
   
-  for (const section of sections) {
-    const isPositive = section.toLowerCase().includes('positive')
-    const isNegative = section.toLowerCase().includes('negative') || section.toLowerCase().includes('improve')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
     
-    if (!isPositive && !isNegative) continue
-    
-    // Extract quotes with multiple patterns
-    const quotePatterns = [
-      /[""]([^""]{20,}?)[""](?:\s|$|,|\.|;)/g,
-      /stating,?\s*[""]([^""]+?)[""](?:\s|$|,|\.|;)/g,
-      /said,?\s*[""]([^""]+?)[""](?:\s|$|,|\.|;)/g,
-      /[-•]\s*(?:One user\s*)?(?:expressed|stated|said|mentioned)?\s*[""]?([^"""\n]{20,})[""]?(?:\s|$|,|\.|;)/g
-    ]
-    
-    for (const pattern of quotePatterns) {
-      let match
-      const regex = new RegExp(pattern.source, pattern.flags)
-      while ((match = regex.exec(section)) !== null) {
-        const quote = match[1].trim()
-        if (quote.length > 20 && quote.length < 300) {
-          if (isPositive && positive.length < 3) {
-            positive.push(quote)
-          } else if (isNegative && negative.length < 2) {
-            negative.push(quote)
-          }
-        }
-      }
+    // Detect sections
+    if (line.match(/positive\s*feedback/i) || line.match(/highlights.*?comments/i)) {
+      inPositiveSection = true
+      inNegativeSection = false
+      continue
     }
     
-    // Also try bullet points
-    const bulletMatches = section.match(/(?:[-•]\s*|^\d+\.\s*)([^-•\n]{20,})/gm)
-    if (bulletMatches && (positive.length === 0 || negative.length === 0)) {
-      bulletMatches.forEach(bullet => {
-        const cleaned = bullet.replace(/^[-•\d+.\s]*/, '').trim()
-        if (cleaned.length > 20 && cleaned.length < 300) {
-          if (isPositive && positive.length < 3) {
-            positive.push(cleaned)
-          } else if (isNegative && negative.length < 2) {
-            negative.push(cleaned)
-          }
+    if (line.match(/negative|areas.*?improvement|neutral\s*inquiries/i)) {
+      inPositiveSection = false
+      inNegativeSection = true
+      continue
+    }
+    
+    // Skip metadata lines
+    if (line.match(/^\*?\*?[A-Za-z]+\s*[Cc]omments?\*?\*?:\s*\d+/i) ||
+        line.match(/^[A-Za-z]+:\s*\d+$/i) ||
+        !line || line.length < 10) {
+      continue
+    }
+    
+    // Extract feedback from numbered items or quotes
+    if (inPositiveSection || inNegativeSection) {
+      let feedbackText = ''
+      
+      // Handle quoted text
+      const quoteMatch = line.match(/[""](.+?)[""]|(?:stating|saying|expressed)\s*,?\s*["'](.+?)["']/)
+      if (quoteMatch) {
+        feedbackText = quoteMatch[1] || quoteMatch[2]
+      } 
+      // Handle numbered items
+      else if (line.match(/^\d+\.\s*/)) {
+        feedbackText = line.replace(/^\d+\.\s*/, '').trim()
+        // Look for quote in this item
+        const innerQuote = feedbackText.match(/[""](.+?)[""]/)
+        if (innerQuote) {
+          feedbackText = innerQuote[1]
         }
-      })
+      }
+      // Handle bullet points
+      else if (line.match(/^[-•]\s*/)) {
+        feedbackText = line.replace(/^[-•]\s*/, '').trim()
+      }
+      
+      // Clean and add to appropriate array
+      if (feedbackText && feedbackText.length > 20) {
+        // Remove any user attribution
+        feedbackText = feedbackText.replace(/^(One user|Another user|A user|Users?)\s*(expressed|stated|said|mentioned)?\s*:?\s*/i, '')
+        feedbackText = feedbackText.replace(/,?\s*(stating|saying).*$/, '')
+        feedbackText = feedbackText.trim()
+        
+        if (inPositiveSection && positive.length < 3 && !feedbackText.includes('Comments:')) {
+          positive.push(feedbackText)
+        } else if (inNegativeSection && negative.length < 3 && !feedbackText.includes('Comments:')) {
+          negative.push(feedbackText)
+        }
+      }
     }
   }
   
@@ -233,8 +257,8 @@ export function parseSentimentFromText(text: string): SentimentData | null {
   return productName ? {
     product: productName,
     score,
-    positive: positive.filter(p => !p.includes('Positive') && !p.includes('Negative')),
-    negative: negative.filter(n => !n.includes('Positive') && !n.includes('Negative')),
+    positive,
+    negative,
     analyzedComments
   } : null
 }
@@ -258,7 +282,8 @@ export function detectResponseType(answer: string): AgentResponse['responseType'
   // Sentiment indicators
   if (lower.includes('sentiment') || lower.includes('% positive') || 
       lower.includes('feedback') || lower.includes('users think') ||
-      lower.includes('positive comments') || lower.includes('negative comments')) {
+      lower.includes('positive comments') || lower.includes('negative comments') ||
+      lower.includes('has received') || lower.includes('mix of feedback')) {
     return 'sentiment'
   }
   
