@@ -160,7 +160,12 @@ export function parseSentimentFromText(text: string): SentimentData | null {
   const negative: string[] = []
   
   // Find all quoted text
-  const quotes = [...text.matchAll(/[""]([^""]+)[""]|saying,\s*[""]([^""]+)[""]|stated,\s*[""]([^""]+)[""]|:\s*[""]([^""]+)[""]|•\s*[""]([^""]+)[""]|-\s*[""]([^""]+)[""]|(\d+\.\s*[""][^""]+[""])/g)]
+  const quotes: RegExpMatchArray[] = []
+  const quoteRegex = /[""]([^""]+)[""]|saying,\s*[""]([^""]+)[""]|stated,\s*[""]([^""]+)[""]|:\s*[""]([^""]+)[""]|•\s*[""]([^""]+)[""]|-\s*[""]([^""]+)[""]|(\d+\.\s*[""][^""]+[""])/g
+  let match
+  while ((match = quoteRegex.exec(text)) !== null) {
+  quotes.push(match)
+  }
   
   // Simple heuristic: first half are positive, second half negative
   // Or look for section markers
