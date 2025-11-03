@@ -31,6 +31,137 @@ interface AgentResponse {
   }
 }
 
+// Parser function to extract products from agent's text response
+function parseProductsFromText(text: string): Product[] {
+  const products: Product[] = []
+  const lines = text.split('\n')
+  let currentProduct: Partial<Product> = {}
+  let currentTopics: string[] = []
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    
+    // Match product name (e.g., "1. **Maillayer**")
+    const nameMatch = line.match(/^\d+\.\s*\*\*(.*?)\*\*/)
+    if (nameMatch) {
+      // Save previous product if exists
+      if (currentProduct.name) {
+        currentProduct.topics = currentTopics
+        products.push(currentProduct as Product)
+      }
+      // Start new product
+      currentProduct = { name: nameMatch[1] }
+      currentTopics = []
+      continue
+    }
+    
+    // Match tagline
+    if (line.includes('Tagline:') || line.includes('tagline:')) {
+      currentProduct.tagline = line.split(/[Tt]agline:/)[1]?.trim()
+      continue
+    }
+    
+    // Match votes
+    if (line.includes('Votes:') || line.includes('votes:')) {
+      const votesMatch = line.match(/(\d+)/)
+      if (votesMatch) {
+        currentProduct.votes = parseInt(votesMatch[1])
+      }
+      continue
+    }
+    
+    // Match comments
+    if (line.includes('Comments') || line.includes('comments')) {
+      const commentsMatch = line.match(/(\d+)/)
+      if (commentsMatch) {
+        currentProduct.comments = parseInt(commentsMatch[1])
+      }
+      continue
+    }
+    
+    // Match topics
+    if (line.includes('Topics:') || line.includes('topics:')) {
+      const topicsText = line.split(/[Tt]opics:/)[1]?.trim()
+      if (topicsText) {
+        currentTopics = topicsText.split(',').map(t => t.trim())
+      }
+      continue
+    }
+  }
+  
+  // Don't forget the last product
+  if (currentProduct.name) {
+    currentProduct.topics = currentTopics
+    products.push(currentProduct as Product)
+  }
+  
+  return products
+}
+
+// Parser for sentiment data
+function parseSentimentFromText(text: string): SentimentData | null {
+  const lines = text.split('\n')
+  let productName = ''
+  let score = 0
+  let positive: string[] = []
+  let negative: string[] = []
+  let inPositive = false
+  let inNegative = false
+  
+  // Extract product name and score
+  const scoreMatch = text.match(/(\d+)%\s*(positive|Positive)/i)
+  if (scoreMatch) {
+    score = parseInt(scoreMatch[1])
+  }
+  
+  // Look for product name in various formats
+  const productMatch = text.match(/(?:for\s+|about\s+|of\s+)["']?([^"'\n]+?)["']?(?:\s+is\s+|\s+shows\s+|\:)/i)
+  if (productMatch) {
+    productName = productMatch[1].trim()
+  }
+  
+  // Extract positive and negative feedback
+  for (const line of lines) {
+    if (line.toLowerCase().includes('positive') && line.toLowerCase().includes('feedback')) {
+      inPositive = true
+      inNegative = false
+      continue
+    }
+    if (line.toLowerCase().includes('negative') || line.toLowerCase().includes('improvement')) {
+      inPositive = false
+      inNegative = true
+      continue
+    }
+    
+    // Extract bullet points or numbered items
+    const itemMatch = line.match(/^[\-•\d+\.]\s*(.+)/)
+    if (itemMatch) {
+      const item = itemMatch[1].replace(/['"]/g, '').trim()
+      if (inPositive && item.length > 5) {
+        positive.push(item)
+      } else if (inNegative && item.length > 5) {
+        negative.push(item)
+      }
+    }
+  }
+  
+  // Extract comment count
+  const commentMatch = text.match(/[Bb]ased on (\d+) comments/)
+  const analyzedComments = commentMatch ? parseInt(commentMatch[1]) : positive.length + negative.length
+  
+  if (productName && score > 0) {
+    return {
+      product: productName,
+      score,
+      positive: positive.slice(0, 5), // Limit to 5 items
+      negative: negative.slice(0, 5),
+      analyzedComments
+    }
+  }
+  
+  return null
+}
+
 export default function ChatV2() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
@@ -44,10 +175,8 @@ export default function ChatV2() {
     }
   }, [showResults])
 
-  const handleSearch = async (e?: React.FormEvent) => {
-    e?.preventDefault()
-    
-    if (!query.trim() || loading) return
+  const performSearch = async (searchQuery: string) => {
+    if (!searchQuery.trim() || loading) return
 
     setLoading(true)
     
@@ -55,44 +184,37 @@ export default function ChatV2() {
       const res = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: query })
+        body: JSON.stringify({ question: searchQuery })
       })
 
       const data: AgentResponse = await res.json()
       
-      // For now, parse the response to determine type
-      // In production, the agent should return structured data
-      const answer = data.answer.toLowerCase()
+      // Parse the agent's text response to extract structured data
+      const answerLower = data.answer.toLowerCase()
       
-      if (answer.includes('trending') || answer.includes('top') || answer.includes('products')) {
-        // Mock products data - in production this comes from agent
-        data.responseType = 'products'
-        data.data = {
-          products: [
-            { name: 'Maillayer', tagline: 'Email marketing without subscriptions', votes: 308, comments: 29 },
-            { name: 'Sidemail 2.0', tagline: 'All-in-one email platform for SaaS', votes: 217, comments: 15 },
-            { name: 'Pickle', tagline: 'Screenshot, redact, and share privately', votes: 195, comments: 6 }
-          ]
+      // Determine response type and parse accordingly
+      if (answerLower.includes('trending') || answerLower.includes('top') || 
+          answerLower.includes('here are') || answerLower.includes('products')) {
+        
+        const products = parseProductsFromText(data.answer)
+        if (products.length > 0) {
+          data.responseType = 'products'
+          data.data = { products }
+        } else {
+          data.responseType = 'general'
         }
-      } else if (answer.includes('sentiment') || answer.includes('positive')) {
-        // Mock sentiment data
-        data.responseType = 'sentiment'
-        data.data = {
-          sentiment: {
-            product: 'Maillayer',
-            score: 78,
-            positive: [
-              'One-time payment model is revolutionary',
-              'Complete ownership of email infrastructure',
-              'Significant cost savings compared to alternatives'
-            ],
-            negative: [
-              'Documentation needs improvement',
-              'Initial setup complexity'
-            ],
-            analyzedComments: 29
-          }
+        
+      } else if (answerLower.includes('sentiment') || answerLower.includes('% positive') || 
+                 answerLower.includes('feedback')) {
+        
+        const sentiment = parseSentimentFromText(data.answer)
+        if (sentiment) {
+          data.responseType = 'sentiment'
+          data.data = { sentiment }
+        } else {
+          data.responseType = 'general'
         }
+        
       } else {
         data.responseType = 'general'
       }
@@ -112,14 +234,20 @@ export default function ChatV2() {
     }
   }
 
+  const handleSearch = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    performSearch(query)
+  }
+
+  const handleExampleClick = (exampleQuery: string) => {
+    setQuery(exampleQuery)
+    performSearch(exampleQuery)
+  }
+
   const goHome = () => {
     setShowResults(false)
     setResponse(null)
     setQuery('')
-  }
-
-  const setExampleQuery = (text: string) => {
-    setQuery(text)
   }
 
   return (
@@ -208,7 +336,8 @@ export default function ChatV2() {
           justifyContent: 'center',
         }}>
           <button
-            onClick={() => setExampleQuery("What's trending today?")}
+            onClick={() => handleExampleClick("What's trending today?")}
+            disabled={loading}
             style={{
               padding: '10px 20px',
               background: 'transparent',
@@ -216,14 +345,17 @@ export default function ChatV2() {
               borderRadius: '100px',
               fontSize: '15px',
               color: '#1d1d1f',
-              cursor: 'pointer',
+              cursor: loading ? 'not-allowed' : 'pointer',
               transition: 'all 0.3s ease',
               whiteSpace: 'nowrap',
+              opacity: loading ? 0.5 : 1,
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#FF6154'
-              e.currentTarget.style.color = 'white'
-              e.currentTarget.style.borderColor = '#FF6154'
+              if (!loading) {
+                e.currentTarget.style.background = '#FF6154'
+                e.currentTarget.style.color = 'white'
+                e.currentTarget.style.borderColor = '#FF6154'
+              }
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = 'transparent'
@@ -235,7 +367,8 @@ export default function ChatV2() {
           </button>
           
           <button
-            onClick={() => setExampleQuery("Show me AI tools")}
+            onClick={() => handleExampleClick("Show me AI tools")}
+            disabled={loading}
             style={{
               padding: '10px 20px',
               background: 'transparent',
@@ -243,14 +376,17 @@ export default function ChatV2() {
               borderRadius: '100px',
               fontSize: '15px',
               color: '#1d1d1f',
-              cursor: 'pointer',
+              cursor: loading ? 'not-allowed' : 'pointer',
               transition: 'all 0.3s ease',
               whiteSpace: 'nowrap',
+              opacity: loading ? 0.5 : 1,
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#FF6154'
-              e.currentTarget.style.color = 'white'
-              e.currentTarget.style.borderColor = '#FF6154'
+              if (!loading) {
+                e.currentTarget.style.background = '#FF6154'
+                e.currentTarget.style.color = 'white'
+                e.currentTarget.style.borderColor = '#FF6154'
+              }
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = 'transparent'
@@ -262,7 +398,8 @@ export default function ChatV2() {
           </button>
           
           <button
-            onClick={() => setExampleQuery("What do people think about Maillayer?")}
+            onClick={() => handleExampleClick("What do people think about Maillayer?")}
+            disabled={loading}
             style={{
               padding: '10px 20px',
               background: 'transparent',
@@ -270,14 +407,17 @@ export default function ChatV2() {
               borderRadius: '100px',
               fontSize: '15px',
               color: '#1d1d1f',
-              cursor: 'pointer',
+              cursor: loading ? 'not-allowed' : 'pointer',
               transition: 'all 0.3s ease',
               whiteSpace: 'nowrap',
+              opacity: loading ? 0.5 : 1,
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#FF6154'
-              e.currentTarget.style.color = 'white'
-              e.currentTarget.style.borderColor = '#FF6154'
+              if (!loading) {
+                e.currentTarget.style.background = '#FF6154'
+                e.currentTarget.style.color = 'white'
+                e.currentTarget.style.borderColor = '#FF6154'
+              }
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = 'transparent'
@@ -403,6 +543,29 @@ export default function ChatV2() {
                     <span>{product.votes} votes</span>
                     <span>{product.comments} comments</span>
                   </div>
+                  {product.topics && product.topics.length > 0 && (
+                    <div style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '6px',
+                      marginTop: '12px',
+                    }}>
+                      {product.topics.slice(0, 3).map((topic, i) => (
+                        <span
+                          key={i}
+                          style={{
+                            fontSize: '11px',
+                            padding: '4px 8px',
+                            backgroundColor: 'rgba(255, 97, 84, 0.1)',
+                            color: '#FF6154',
+                            borderRadius: '4px',
+                          }}
+                        >
+                          {topic}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </article>
               ))}
             </div>
@@ -448,57 +611,61 @@ export default function ChatV2() {
                 gridTemplateColumns: '1fr',
                 gap: '32px',
               }}>
-                <section style={{
-                  padding: '32px',
-                  borderRadius: '16px',
-                  background: 'rgba(255, 97, 84, 0.04)',
-                  border: '1px solid rgba(255, 97, 84, 0.08)',
-                }}>
-                  <h3 style={{
-                    fontSize: '19px',
-                    fontWeight: 500,
-                    marginBottom: '24px',
-                    letterSpacing: '-0.021em',
+                {response.data.sentiment.positive.length > 0 && (
+                  <section style={{
+                    padding: '32px',
+                    borderRadius: '16px',
+                    background: 'rgba(255, 97, 84, 0.04)',
+                    border: '1px solid rgba(255, 97, 84, 0.08)',
                   }}>
-                    Positive Feedback
-                  </h3>
-                  {response.data.sentiment.positive.map((item, idx) => (
-                    <div key={idx} style={{
-                      padding: idx === 0 ? '0 0 16px' : '16px 0',
-                      borderBottom: idx === response.data.sentiment.positive.length - 1 ? 'none' : '1px solid rgba(0, 0, 0, 0.05)',
-                      fontSize: '15px',
-                      lineHeight: 1.6,
+                    <h3 style={{
+                      fontSize: '19px',
+                      fontWeight: 500,
+                      marginBottom: '24px',
+                      letterSpacing: '-0.021em',
                     }}>
-                      {item}
-                    </div>
-                  ))}
-                </section>
+                      Positive Feedback
+                    </h3>
+                    {response.data.sentiment.positive.map((item, idx) => (
+                      <div key={idx} style={{
+                        padding: idx === 0 ? '0 0 16px' : '16px 0',
+                        borderBottom: idx === response.data.sentiment.positive.length - 1 ? 'none' : '1px solid rgba(0, 0, 0, 0.05)',
+                        fontSize: '15px',
+                        lineHeight: 1.6,
+                      }}>
+                        {item}
+                      </div>
+                    ))}
+                  </section>
+                )}
                 
-                <section style={{
-                  padding: '32px',
-                  borderRadius: '16px',
-                  background: 'rgba(0, 0, 0, 0.02)',
-                  border: '1px solid rgba(0, 0, 0, 0.06)',
-                }}>
-                  <h3 style={{
-                    fontSize: '19px',
-                    fontWeight: 500,
-                    marginBottom: '24px',
-                    letterSpacing: '-0.021em',
+                {response.data.sentiment.negative.length > 0 && (
+                  <section style={{
+                    padding: '32px',
+                    borderRadius: '16px',
+                    background: 'rgba(0, 0, 0, 0.02)',
+                    border: '1px solid rgba(0, 0, 0, 0.06)',
                   }}>
-                    Areas for Improvement
-                  </h3>
-                  {response.data.sentiment.negative.map((item, idx) => (
-                    <div key={idx} style={{
-                      padding: idx === 0 ? '0 0 16px' : '16px 0',
-                      borderBottom: idx === response.data.sentiment.negative.length - 1 ? 'none' : '1px solid rgba(0, 0, 0, 0.05)',
-                      fontSize: '15px',
-                      lineHeight: 1.6,
+                    <h3 style={{
+                      fontSize: '19px',
+                      fontWeight: 500,
+                      marginBottom: '24px',
+                      letterSpacing: '-0.021em',
                     }}>
-                      {item}
-                    </div>
-                  ))}
-                </section>
+                      Areas for Improvement
+                    </h3>
+                    {response.data.sentiment.negative.map((item, idx) => (
+                      <div key={idx} style={{
+                        padding: idx === 0 ? '0 0 16px' : '16px 0',
+                        borderBottom: idx === response.data.sentiment.negative.length - 1 ? 'none' : '1px solid rgba(0, 0, 0, 0.05)',
+                        fontSize: '15px',
+                        lineHeight: 1.6,
+                      }}>
+                        {item}
+                      </div>
+                    ))}
+                  </section>
+                )}
               </div>
             </div>
           )}
