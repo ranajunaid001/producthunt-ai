@@ -1,189 +1,15 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-
-interface Product {
-  name: string
-  tagline: string
-  votes: number
-  comments: number
-  topics?: string[]
-  website?: string
-  description?: string
-}
-
-interface SentimentData {
-  product: string
-  score: number
-  positive: string[]
-  negative: string[]
-  analyzedComments: number
-}
-
-interface AgentResponse {
-  answer: string
-  toolsUsed?: any[]
-  responseType?: 'products' | 'single-product' | 'sentiment' | 'general'
-  data?: {
-    products?: Product[]
-    product?: Product
-    sentiment?: SentimentData
-  }
-}
-
-// Parser function to extract products from agent's text response
-function parseProductsFromText(text: string): Product[] {
-  const products: Product[] = []
-  const lines = text.split('\n')
-  let currentProduct: Partial<Product> = {}
-  let currentTopics: string[] = []
-  
-  // Check if it's describing a single "hottest" product
-  const singleProductMatch = text.match(/hottest product.*?is\s+\*\*(.*?)\*\*/i)
-  if (singleProductMatch) {
-    const name = singleProductMatch[1]
-    const taglineMatch = text.match(/which is an?\s+(.*?)(?:\.|,)/i)
-    const votesMatch = text.match(/(\d+)\s+votes/i)
-    const commentsMatch = text.match(/(\d+)\s+comments/i)
-    
-    if (name) {
-      products.push({
-        name: name,
-        tagline: taglineMatch ? taglineMatch[1] : '',
-        votes: votesMatch ? parseInt(votesMatch[1]) : 0,
-        comments: commentsMatch ? parseInt(commentsMatch[1]) : 0,
-        topics: []
-      })
-      return products
-    }
-  }
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim()
-    
-    // Match product name (e.g., "1. **Maillayer**")
-    const nameMatch = line.match(/^\d+\.\s*\*\*(.*?)\*\*/)
-    if (nameMatch) {
-      // Save previous product if exists
-      if (currentProduct.name) {
-        currentProduct.topics = currentTopics
-        products.push(currentProduct as Product)
-      }
-      // Start new product
-      currentProduct = { name: nameMatch[1] }
-      currentTopics = []
-      continue
-    }
-    
-    // Match tagline - remove any leading stars
-    if (line.includes('Tagline:') || line.includes('tagline:')) {
-      const tagline = line.split(/[Tt]agline:/)[1]?.trim()
-      currentProduct.tagline = tagline?.replace(/^\*\*\s*/, '').replace(/\*\*$/, '')
-      continue
-    }
-    
-    // For inline taglines after dash
-    if (line.includes(' - ') && currentProduct.name && !currentProduct.tagline) {
-      const parts = line.split(' - ')
-      if (parts.length > 1) {
-        currentProduct.tagline = parts[1].replace(/^\*\*\s*/, '').replace(/\*\*$/, '').trim()
-      }
-    }
-    
-    // Match votes
-    const votesMatch = line.match(/(\d+)\s+votes?/i)
-    if (votesMatch) {
-      currentProduct.votes = parseInt(votesMatch[1])
-    }
-    
-    // Match comments
-    const commentsMatch = line.match(/(\d+)\s+comments?/i)
-    if (commentsMatch) {
-      currentProduct.comments = parseInt(commentsMatch[1])
-    }
-    
-    // Match topics
-    if (line.includes('Topics:') || line.includes('topics:')) {
-      const topicsText = line.split(/[Tt]opics:/)[1]?.trim()
-      if (topicsText) {
-        currentTopics = topicsText.split(',').map(t => t.trim())
-      }
-      continue
-    }
-  }
-  
-  // Don't forget the last product
-  if (currentProduct.name) {
-    currentProduct.topics = currentTopics
-    products.push(currentProduct as Product)
-  }
-  
-  return products
-}
-
-// Parser for sentiment data
-function parseSentimentFromText(text: string): SentimentData | null {
-  const lines = text.split('\n')
-  let productName = ''
-  let score = 0
-  let positive: string[] = []
-  let negative: string[] = []
-  let inPositive = false
-  let inNegative = false
-  
-  // Extract product name and score
-  const scoreMatch = text.match(/(\d+)%\s*(positive|Positive)/i)
-  if (scoreMatch) {
-    score = parseInt(scoreMatch[1])
-  }
-  
-  // Look for product name in various formats
-  const productMatch = text.match(/(?:for\s+|about\s+|of\s+)["']?([^"'\n]+?)["']?(?:\s+is\s+|\s+shows\s+|\:)/i)
-  if (productMatch) {
-    productName = productMatch[1].trim()
-  }
-  
-  // Extract positive and negative feedback
-  for (const line of lines) {
-    if (line.toLowerCase().includes('positive') && line.toLowerCase().includes('feedback')) {
-      inPositive = true
-      inNegative = false
-      continue
-    }
-    if (line.toLowerCase().includes('negative') || line.toLowerCase().includes('improvement')) {
-      inPositive = false
-      inNegative = true
-      continue
-    }
-    
-    // Extract bullet points or numbered items
-    const itemMatch = line.match(/^[\-•\d+\.]\s*(.+)/)
-    if (itemMatch) {
-      const item = itemMatch[1].replace(/['"]/g, '').trim()
-      if (inPositive && item.length > 5) {
-        positive.push(item)
-      } else if (inNegative && item.length > 5) {
-        negative.push(item)
-      }
-    }
-  }
-  
-  // Extract comment count
-  const commentMatch = text.match(/[Bb]ased on (\d+) comments/)
-  const analyzedComments = commentMatch ? parseInt(commentMatch[1]) : positive.length + negative.length
-  
-  if (productName && score > 0) {
-    return {
-      product: productName,
-      score,
-      positive: positive.slice(0, 5), // Limit to 5 items
-      negative: negative.slice(0, 5),
-      analyzedComments
-    }
-  }
-  
-  return null
-}
+import { 
+  parseProductsFromText, 
+  parseSentimentFromText, 
+  detectResponseType,
+  styles,
+  type Product,
+  type SentimentData,
+  type AgentResponse
+} from '@/lib/productHuntHelpers'
 
 export default function ChatV2() {
   const [query, setQuery] = useState('')
@@ -212,49 +38,29 @@ export default function ChatV2() {
 
       const data: AgentResponse = await res.json()
       
-      // Parse the agent's text response to extract structured data
-      const answerLower = data.answer.toLowerCase()
+      // Detect response type
+      const responseType = detectResponseType(data.answer)
+      data.responseType = responseType
       
-      // Check if it's describing a single product or multiple products
-      if (answerLower.includes('hottest product') || answerLower.includes('best product') || 
-          (answerLower.includes('is') && !answerLower.includes('are'))) {
-        
-        const products = parseProductsFromText(data.answer)
-        if (products.length === 1) {
-          // Single product view
-          data.responseType = 'single-product'
-          data.data = { product: products[0] }
-        } else if (products.length > 1) {
-          data.responseType = 'products'
-          data.data = { products }
-        } else {
-          data.responseType = 'general'
-        }
-        
-      } else if (answerLower.includes('trending') || answerLower.includes('products') || 
-                 answerLower.includes('here are') || answerLower.includes('launched')) {
-        
+      // Parse based on type
+      if (responseType === 'single-product' || responseType === 'products') {
         const products = parseProductsFromText(data.answer)
         if (products.length > 0) {
-          data.responseType = 'products'
-          data.data = { products }
+          if (responseType === 'single-product') {
+            data.data = { product: products[0] }
+          } else {
+            data.data = { products }
+          }
         } else {
           data.responseType = 'general'
         }
-        
-      } else if (answerLower.includes('sentiment') || answerLower.includes('% positive') || 
-                 answerLower.includes('feedback')) {
-        
+      } else if (responseType === 'sentiment') {
         const sentiment = parseSentimentFromText(data.answer)
         if (sentiment) {
-          data.responseType = 'sentiment'
           data.data = { sentiment }
         } else {
           data.responseType = 'general'
         }
-        
-      } else {
-        data.responseType = 'general'
       }
 
       setResponse(data)
@@ -294,18 +100,7 @@ export default function ChatV2() {
   }
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      backgroundColor: '#ffffff',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif',
-      color: '#1d1d1f',
-      lineHeight: '1.47059',
-      fontWeight: 400,
-      letterSpacing: '-0.022em',
-      display: 'flex',
-      flexDirection: 'column',
-    }}>
-      
+    <div style={styles.container}>
       {/* Hero Section */}
       <section style={{
         flex: 1,
@@ -381,29 +176,14 @@ export default function ChatV2() {
           <button
             onClick={() => handleExampleClick("What's trending today?")}
             disabled={loading}
-            style={{
-              padding: '10px 20px',
-              background: 'transparent',
-              border: '1px solid #d2d2d7',
-              borderRadius: '100px',
-              fontSize: '15px',
-              color: '#1d1d1f',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              transition: 'all 0.3s ease',
-              whiteSpace: 'nowrap',
-              opacity: loading ? 0.5 : 1,
-            }}
+            style={styles.button}
             onMouseEnter={(e) => {
               if (!loading) {
-                e.currentTarget.style.background = '#FF6154'
-                e.currentTarget.style.color = 'white'
-                e.currentTarget.style.borderColor = '#FF6154'
+                Object.assign(e.currentTarget.style, styles.buttonHover)
               }
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent'
-              e.currentTarget.style.color = '#1d1d1f'
-              e.currentTarget.style.borderColor = '#d2d2d7'
+              Object.assign(e.currentTarget.style, styles.button)
             }}
           >
             What's trending today?
@@ -412,29 +192,14 @@ export default function ChatV2() {
           <button
             onClick={() => handleExampleClick("What's the best product launched today?")}
             disabled={loading}
-            style={{
-              padding: '10px 20px',
-              background: 'transparent',
-              border: '1px solid #d2d2d7',
-              borderRadius: '100px',
-              fontSize: '15px',
-              color: '#1d1d1f',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              transition: 'all 0.3s ease',
-              whiteSpace: 'nowrap',
-              opacity: loading ? 0.5 : 1,
-            }}
+            style={styles.button}
             onMouseEnter={(e) => {
               if (!loading) {
-                e.currentTarget.style.background = '#FF6154'
-                e.currentTarget.style.color = 'white'
-                e.currentTarget.style.borderColor = '#FF6154'
+                Object.assign(e.currentTarget.style, styles.buttonHover)
               }
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent'
-              e.currentTarget.style.color = '#1d1d1f'
-              e.currentTarget.style.borderColor = '#d2d2d7'
+              Object.assign(e.currentTarget.style, styles.button)
             }}
           >
             Best product today?
@@ -443,29 +208,14 @@ export default function ChatV2() {
           <button
             onClick={() => handleExampleClick("Show me AI automation products")}
             disabled={loading}
-            style={{
-              padding: '10px 20px',
-              background: 'transparent',
-              border: '1px solid #d2d2d7',
-              borderRadius: '100px',
-              fontSize: '15px',
-              color: '#1d1d1f',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              transition: 'all 0.3s ease',
-              whiteSpace: 'nowrap',
-              opacity: loading ? 0.5 : 1,
-            }}
+            style={styles.button}
             onMouseEnter={(e) => {
               if (!loading) {
-                e.currentTarget.style.background = '#FF6154'
-                e.currentTarget.style.color = 'white'
-                e.currentTarget.style.borderColor = '#FF6154'
+                Object.assign(e.currentTarget.style, styles.buttonHover)
               }
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent'
-              e.currentTarget.style.color = '#1d1d1f'
-              e.currentTarget.style.borderColor = '#d2d2d7'
+              Object.assign(e.currentTarget.style, styles.button)
             }}
           >
             AI automation products
@@ -542,25 +292,12 @@ export default function ChatV2() {
                 <article
                   key={idx}
                   onClick={() => handleProductClick(product.name)}
-                  style={{
-                    background: 'rgba(255, 97, 84, 0.03)',
-                    padding: '24px',
-                    border: '1px solid rgba(255, 97, 84, 0.06)',
-                    borderRadius: '12px',
-                    transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
-                    cursor: 'pointer',
-                  }}
+                  style={styles.productCard}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-2px)'
-                    e.currentTarget.style.background = 'rgba(255, 97, 84, 0.08)'
-                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(255, 97, 84, 0.1)'
-                    e.currentTarget.style.borderColor = 'rgba(255, 97, 84, 0.12)'
+                    Object.assign(e.currentTarget.style, styles.productCardHover)
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0)'
-                    e.currentTarget.style.background = 'rgba(255, 97, 84, 0.03)'
-                    e.currentTarget.style.boxShadow = 'none'
-                    e.currentTarget.style.borderColor = 'rgba(255, 97, 84, 0.06)'
+                    Object.assign(e.currentTarget.style, styles.productCard)
                   }}
                 >
                   <h2 style={{
@@ -833,21 +570,13 @@ export default function ChatV2() {
       
       <style jsx>{`
         @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
         
         @keyframes fadeOut {
-          from {
-            opacity: 1;
-          }
-          to {
-            opacity: 0;
-          }
+          from { opacity: 1; }
+          to { opacity: 0; }
         }
         
         @keyframes fadeInUp {
