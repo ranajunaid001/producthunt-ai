@@ -186,14 +186,16 @@ export function parseSentimentFromText(text: string): SentimentData | null {
   
   // If no quotes found, look for bullet points
   if (positive.length === 0 && negative.length === 0) {
-    const bulletPoints = text.match(/[-•]\s*(.+?)(?=[-•\n]|$)/g) || []
-    bulletPoints.forEach((point, i) => {
+  const bulletMatches = text.match(/[-•]\s*(.+?)(?=[-•\n]|$)/g)
+  if (bulletMatches) {
+    bulletMatches.forEach((point, i) => {
       const cleaned = point.replace(/^[-•]\s*/, '').trim()
       if (cleaned.length > 10) {
-        if (i < bulletPoints.length / 2) positive.push(cleaned)
+        if (i < bulletMatches.length / 2) positive.push(cleaned)
         else negative.push(cleaned)
-      }
-    })
+        }
+      })
+    }
   }
   
   const analyzedComments = parseInt(text.match(/(\d+)\s+comments?\s+analyzed/i)?.[1] || String(total))
