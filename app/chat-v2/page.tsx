@@ -1,336 +1,581 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
+
+interface Product {
+  name: string
+  tagline: string
+  votes: number
+  comments: number
+  topics?: string[]
+  website?: string
+  description?: string
+}
+
+interface SentimentData {
+  product: string
+  score: number
+  positive: string[]
+  negative: string[]
+  analyzedComments: number
+}
+
+interface AgentResponse {
+  answer: string
+  toolsUsed?: any[]
+  responseType?: 'products' | 'single-product' | 'sentiment' | 'general'
+  data?: {
+    products?: Product[]
+    product?: Product
+    sentiment?: SentimentData
+  }
+}
 
 export default function ChatV2() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
-  const [response, setResponse] = useState<any>(null)
+  const [showResults, setShowResults] = useState(false)
+  const [response, setResponse] = useState<AgentResponse | null>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
 
-  // Mock data for demo
-  const mockResponses = {
-    trending: {
-      type: 'products',
-      products: [
-        { name: 'Maillayer', tagline: 'Email marketing without subscriptions', votes: 308, comments: 29, topics: ['Email', 'Marketing'] },
-        { name: 'Sidemail 2.0', tagline: 'All-in-one email platform for SaaS', votes: 217, comments: 15, topics: ['Email', 'SaaS'] },
-        { name: 'Pickle', tagline: 'Screenshot, redact, and share privately', votes: 195, comments: 6, topics: ['Mac', 'Privacy'] }
-      ]
-    },
-    single: {
-      type: 'single-product',
-      product: {
-        name: 'Maillayer',
-        tagline: 'Email marketing without subscriptions',
-        description: 'One-time payment email platform that lets you send unlimited emails via Amazon SES at just $0.10/1000 emails',
-        votes: 308,
-        comments: 29,
-        topics: ['Email', 'Marketing', 'Self-hosted'],
-        website: 'https://maillayer.com'
+  useEffect(() => {
+    if (showResults && contentRef.current) {
+      contentRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [showResults])
+
+  const handleSearch = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    
+    if (!query.trim() || loading) return
+
+    setLoading(true)
+    
+    try {
+      const res = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: query })
+      })
+
+      const data: AgentResponse = await res.json()
+      
+      // For now, parse the response to determine type
+      // In production, the agent should return structured data
+      const answer = data.answer.toLowerCase()
+      
+      if (answer.includes('trending') || answer.includes('top') || answer.includes('products')) {
+        // Mock products data - in production this comes from agent
+        data.responseType = 'products'
+        data.data = {
+          products: [
+            { name: 'Maillayer', tagline: 'Email marketing without subscriptions', votes: 308, comments: 29 },
+            { name: 'Sidemail 2.0', tagline: 'All-in-one email platform for SaaS', votes: 217, comments: 15 },
+            { name: 'Pickle', tagline: 'Screenshot, redact, and share privately', votes: 195, comments: 6 }
+          ]
+        }
+      } else if (answer.includes('sentiment') || answer.includes('positive')) {
+        // Mock sentiment data
+        data.responseType = 'sentiment'
+        data.data = {
+          sentiment: {
+            product: 'Maillayer',
+            score: 78,
+            positive: [
+              'One-time payment model is revolutionary',
+              'Complete ownership of email infrastructure',
+              'Significant cost savings compared to alternatives'
+            ],
+            negative: [
+              'Documentation needs improvement',
+              'Initial setup complexity'
+            ],
+            analyzedComments: 29
+          }
+        }
+      } else {
+        data.responseType = 'general'
       }
-    },
-    sentiment: {
-      type: 'sentiment',
-      product: 'Maillayer',
-      score: 78,
-      positive: [
-        'One-time payment is a game changer',
-        'Finally, I own my email infrastructure',
-        'Saves hundreds per month'
-      ],
-      negative: [
-        'Documentation could be better',
-        'Initial setup is complex'
-      ],
-      summary: 'Users love the cost savings and ownership, but want better docs'
+
+      setResponse(data)
+      setShowResults(true)
+      setQuery('')
+    } catch (error) {
+      console.error('Error:', error)
+      setResponse({
+        answer: 'Sorry, I encountered an error. Please try again.',
+        responseType: 'general'
+      })
+      setShowResults(true)
+    } finally {
+      setLoading(false)
     }
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    // Demo: set different responses based on query
-    if (query.includes('trending') || query.includes('top')) {
-      setResponse(mockResponses.trending)
-    } else if (query.includes('hottest')) {
-      setResponse(mockResponses.single)
-    } else if (query.includes('think about')) {
-      setResponse(mockResponses.sentiment)
-    }
+  const goHome = () => {
+    setShowResults(false)
+    setResponse(null)
+    setQuery('')
+  }
+
+  const setExampleQuery = (text: string) => {
+    setQuery(text)
   }
 
   return (
     <div style={{
       minHeight: '100vh',
-      backgroundColor: '#f8f9fa',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif',
-      padding: '2rem',
+      backgroundColor: '#ffffff',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif',
+      color: '#1d1d1f',
+      lineHeight: '1.47059',
+      fontWeight: 400,
+      letterSpacing: '-0.022em',
+      display: 'flex',
+      flexDirection: 'column',
     }}>
-      {/* Search Bar */}
-      <form onSubmit={handleSubmit} style={{
-        maxWidth: '800px',
-        margin: '0 auto 3rem',
+      
+      {/* Hero Section */}
+      <section style={{
+        flex: 1,
+        display: showResults ? 'none' : 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: '80px 20px',
+        textAlign: 'center',
+        animation: showResults ? 'fadeOut 0.5s ease-out' : 'fadeIn 0.8s ease-out',
       }}>
-        <div style={{
-          display: 'flex',
-          gap: '1rem',
-          backgroundColor: 'white',
-          padding: '0.75rem',
-          borderRadius: '16px',
-          boxShadow: '0 2px 20px rgba(0,0,0,0.08)',
+        <h1 style={{
+          fontSize: 'clamp(40px, 8vw, 64px)',
+          fontWeight: 600,
+          letterSpacing: '-0.003em',
+          lineHeight: 1.08,
+          marginBottom: '16px',
+        }}>
+          Product Hunt <span style={{ color: '#FF6154' }}>AI</span>
+        </h1>
+        
+        <p style={{
+          fontSize: 'clamp(17px, 2.5vw, 21px)',
+          color: '#86868b',
+          fontWeight: 400,
+          marginBottom: '48px',
+          maxWidth: '600px',
+        }}>
+          Ask anything about today's products. Get insights, analysis, and sentiment in seconds.
+        </p>
+        
+        {/* Search Form */}
+        <form onSubmit={handleSearch} style={{
+          width: '100%',
+          maxWidth: '620px',
         }}>
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ask about Product Hunt..."
+            placeholder="What would you like to know?"
+            disabled={loading}
             style={{
-              flex: 1,
-              padding: '0.75rem 1rem',
-              fontSize: '1rem',
+              width: '100%',
+              padding: '20px 24px',
+              fontSize: '17px',
               border: 'none',
               outline: 'none',
               backgroundColor: '#f5f5f7',
               borderRadius: '12px',
+              transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+              opacity: loading ? 0.7 : 1,
+            }}
+            onFocus={(e) => {
+              e.target.style.backgroundColor = '#f9f9f9'
+              e.target.style.boxShadow = '0 0 0 1px rgba(255, 97, 84, 0.3)'
+            }}
+            onBlur={(e) => {
+              e.target.style.backgroundColor = '#f5f5f7'
+              e.target.style.boxShadow = 'none'
             }}
           />
+        </form>
+        
+        {/* Example Queries */}
+        <div style={{
+          display: 'flex',
+          gap: '12px',
+          marginTop: '24px',
+          flexWrap: 'wrap',
+          justifyContent: 'center',
+        }}>
           <button
-            type="submit"
+            onClick={() => setExampleQuery("What's trending today?")}
             style={{
-              padding: '0.75rem 2rem',
-              backgroundColor: '#007AFF',
-              color: 'white',
-              border: 'none',
-              borderRadius: '12px',
-              fontSize: '1rem',
-              fontWeight: '500',
+              padding: '10px 20px',
+              background: 'transparent',
+              border: '1px solid #d2d2d7',
+              borderRadius: '100px',
+              fontSize: '15px',
+              color: '#1d1d1f',
               cursor: 'pointer',
+              transition: 'all 0.3s ease',
+              whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#FF6154'
+              e.currentTarget.style.color = 'white'
+              e.currentTarget.style.borderColor = '#FF6154'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+              e.currentTarget.style.color = '#1d1d1f'
+              e.currentTarget.style.borderColor = '#d2d2d7'
             }}
           >
-            Ask
+            What's trending today?
+          </button>
+          
+          <button
+            onClick={() => setExampleQuery("Show me AI tools")}
+            style={{
+              padding: '10px 20px',
+              background: 'transparent',
+              border: '1px solid #d2d2d7',
+              borderRadius: '100px',
+              fontSize: '15px',
+              color: '#1d1d1f',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+              whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#FF6154'
+              e.currentTarget.style.color = 'white'
+              e.currentTarget.style.borderColor = '#FF6154'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+              e.currentTarget.style.color = '#1d1d1f'
+              e.currentTarget.style.borderColor = '#d2d2d7'
+            }}
+          >
+            Show me AI tools
+          </button>
+          
+          <button
+            onClick={() => setExampleQuery("What do people think about Maillayer?")}
+            style={{
+              padding: '10px 20px',
+              background: 'transparent',
+              border: '1px solid #d2d2d7',
+              borderRadius: '100px',
+              fontSize: '15px',
+              color: '#1d1d1f',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+              whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#FF6154'
+              e.currentTarget.style.color = 'white'
+              e.currentTarget.style.borderColor = '#FF6154'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+              e.currentTarget.style.color = '#1d1d1f'
+              e.currentTarget.style.borderColor = '#d2d2d7'
+            }}
+          >
+            Analyze sentiment
           </button>
         </div>
-      </form>
-
-      {/* Dynamic Response Area */}
-      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-        {/* Multiple Products Grid */}
-        {response?.type === 'products' && (
+        
+        {loading && (
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-            gap: '1.5rem',
+            marginTop: '40px',
+            display: 'flex',
+            gap: '8px',
           }}>
-            {response.products.map((product: any, idx: number) => (
-              <div key={idx} style={{
-                backgroundColor: 'white',
-                borderRadius: '16px',
-                padding: '1.5rem',
-                boxShadow: '0 2px 20px rgba(0,0,0,0.08)',
-                transition: 'transform 0.2s, box-shadow 0.2s',
-                cursor: 'pointer',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-4px)'
-                e.currentTarget.style.boxShadow = '0 8px 30px rgba(0,0,0,0.12)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)'
-                e.currentTarget.style.boxShadow = '0 2px 20px rgba(0,0,0,0.08)'
-              }}>
-                <h3 style={{ margin: '0 0 0.5rem', fontSize: '1.25rem' }}>{product.name}</h3>
-                <p style={{ color: '#6e6e73', margin: '0 0 1rem', fontSize: '0.95rem' }}>{product.tagline}</p>
-                
-                <div style={{ display: 'flex', gap: '1.5rem', margin: '1rem 0' }}>
-                  <span style={{ fontSize: '1.1rem' }}>🔥 {product.votes}</span>
-                  <span style={{ fontSize: '1.1rem' }}>💬 {product.comments}</span>
-                </div>
-                
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '1rem' }}>
-                  {product.topics.map((topic: string) => (
-                    <span key={topic} style={{
-                      padding: '0.25rem 0.75rem',
-                      backgroundColor: '#f5f5f7',
-                      borderRadius: '100px',
-                      fontSize: '0.8rem',
-                      color: '#6e6e73',
-                    }}>#{topic}</span>
-                  ))}
-                </div>
-                
-                <button style={{
-                  marginTop: '1rem',
-                  padding: '0.5rem 1rem',
-                  backgroundColor: 'transparent',
-                  color: '#007AFF',
-                  border: '1px solid #007AFF',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem',
-                  fontWeight: '500',
-                }}>
-                  Analyze →
-                </button>
-              </div>
+            {[0, 1, 2].map(i => (
+              <div
+                key={i}
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  backgroundColor: '#FF6154',
+                  animation: `pulse 1.4s ease-in-out infinite`,
+                  animationDelay: `${i * 0.2}s`,
+                }}
+              />
             ))}
           </div>
         )}
-
-        {/* Single Product Hero */}
-        {response?.type === 'single-product' && (
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '24px',
-            padding: '3rem',
-            boxShadow: '0 2px 40px rgba(0,0,0,0.1)',
-            textAlign: 'center',
-          }}>
-            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🏆</div>
-            <h1 style={{ fontSize: '2.5rem', margin: '0 0 0.5rem' }}>{response.product.name}</h1>
-            <p style={{ fontSize: '1.25rem', color: '#6e6e73', margin: '0 0 2rem' }}>{response.product.tagline}</p>
-            
+      </section>
+      
+      {/* Results Section */}
+      {showResults && response && (
+        <div
+          ref={contentRef}
+          style={{
+            maxWidth: '980px',
+            margin: '0 auto',
+            padding: '60px 20px 80px',
+            minHeight: 'calc(100vh - 100px)',
+            animation: 'fadeInUp 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+          }}
+        >
+          {/* Back Button */}
+          <header style={{ marginBottom: '40px' }}>
+            <button
+              onClick={goHome}
+              style={{
+                padding: '10px 20px',
+                background: 'transparent',
+                border: 'none',
+                fontSize: '15px',
+                color: '#86868b',
+                cursor: 'pointer',
+                transition: 'color 0.3s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#FF6154'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = '#86868b'
+              }}
+            >
+              ← New Search
+            </button>
+          </header>
+          
+          {/* Dynamic Content Based on Response Type */}
+          {response.responseType === 'products' && response.data?.products && (
             <div style={{
-              display: 'flex',
-              justifyContent: 'center',
-              gap: '3rem',
-              margin: '2rem 0',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+              gap: '20px',
             }}>
-              <div style={{
-                padding: '1rem 2rem',
-                backgroundColor: '#fff3e0',
-                borderRadius: '12px',
-              }}>
-                <div style={{ fontSize: '2rem', fontWeight: 'bold' }}>🔥 {response.product.votes}</div>
-                <div style={{ color: '#6e6e73', marginTop: '0.25rem' }}>votes</div>
-              </div>
-              <div style={{
-                padding: '1rem 2rem',
-                backgroundColor: '#e3f2fd',
-                borderRadius: '12px',
-              }}>
-                <div style={{ fontSize: '2rem', fontWeight: 'bold' }}>💬 {response.product.comments}</div>
-                <div style={{ color: '#6e6e73', marginTop: '0.25rem' }}>comments</div>
-              </div>
-            </div>
-            
-            <p style={{ fontSize: '1.1rem', color: '#1d1d1f', lineHeight: 1.6, margin: '2rem auto', maxWidth: '600px' }}>
-              {response.product.description}
-            </p>
-            
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'center', margin: '2rem 0' }}>
-              {response.product.topics.map((topic: string) => (
-                <span key={topic} style={{
-                  padding: '0.5rem 1rem',
-                  backgroundColor: '#f5f5f7',
-                  borderRadius: '100px',
-                  fontSize: '0.9rem',
-                  color: '#6e6e73',
-                }}>📁 {topic}</span>
+              {response.data.products.map((product, idx) => (
+                <article
+                  key={idx}
+                  style={{
+                    background: 'rgba(255, 97, 84, 0.03)',
+                    padding: '24px',
+                    border: '1px solid rgba(255, 97, 84, 0.06)',
+                    borderRadius: '12px',
+                    transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-2px)'
+                    e.currentTarget.style.background = 'rgba(255, 97, 84, 0.08)'
+                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(255, 97, 84, 0.1)'
+                    e.currentTarget.style.borderColor = 'rgba(255, 97, 84, 0.12)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)'
+                    e.currentTarget.style.background = 'rgba(255, 97, 84, 0.03)'
+                    e.currentTarget.style.boxShadow = 'none'
+                    e.currentTarget.style.borderColor = 'rgba(255, 97, 84, 0.06)'
+                  }}
+                >
+                  <h2 style={{
+                    fontSize: '19px',
+                    fontWeight: 500,
+                    letterSpacing: '-0.021em',
+                    marginBottom: '4px',
+                  }}>
+                    {product.name}
+                  </h2>
+                  <p style={{
+                    fontSize: '15px',
+                    color: '#86868b',
+                    marginBottom: '16px',
+                  }}>
+                    {product.tagline}
+                  </p>
+                  <div style={{
+                    display: 'flex',
+                    gap: '20px',
+                    fontSize: '13px',
+                    color: '#86868b',
+                  }}>
+                    <span>{product.votes} votes</span>
+                    <span>{product.comments} comments</span>
+                  </div>
+                </article>
               ))}
             </div>
-            
-            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginTop: '2rem' }}>
-              <button style={{
-                padding: '0.75rem 1.5rem',
-                backgroundColor: '#007AFF',
-                color: 'white',
-                border: 'none',
-                borderRadius: '10px',
-                fontSize: '1rem',
-                fontWeight: '500',
-                cursor: 'pointer',
-              }}>Visit Website</button>
-              <button style={{
-                padding: '0.75rem 1.5rem',
-                backgroundColor: 'transparent',
-                color: '#007AFF',
-                border: '2px solid #007AFF',
-                borderRadius: '10px',
-                fontSize: '1rem',
-                fontWeight: '500',
-                cursor: 'pointer',
-              }}>Analyze Sentiment</button>
-            </div>
-          </div>
-        )}
-
-        {/* Sentiment Analysis */}
-        {response?.type === 'sentiment' && (
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '24px',
-            padding: '2rem',
-            boxShadow: '0 2px 40px rgba(0,0,0,0.1)',
-          }}>
-            <h2 style={{ fontSize: '2rem', margin: '0 0 0.5rem', textAlign: 'center' }}>
-              {response.product} Sentiment Analysis
-            </h2>
-            
-            <div style={{
-              textAlign: 'center',
-              fontSize: '3rem',
-              fontWeight: 'bold',
-              color: '#34c759',
-              margin: '1rem 0',
-            }}>
-              ⭐ {response.score}% Positive
-            </div>
-            
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginTop: '2rem' }}>
-              {/* Positive */}
-              <div style={{
-                padding: '2rem',
-                backgroundColor: '#f0fdf4',
-                borderRadius: '16px',
-                border: '1px solid #bbf7d0',
-              }}>
-                <h3 style={{ margin: '0 0 1rem', fontSize: '1.5rem' }}>😊 What Users Love</h3>
-                {response.positive.map((item: string, idx: number) => (
-                  <div key={idx} style={{
-                    padding: '0.75rem',
-                    margin: '0.5rem 0',
-                    backgroundColor: 'white',
-                    borderRadius: '8px',
-                    borderLeft: '4px solid #34c759',
-                  }}>
-                    "{item}"
-                  </div>
-                ))}
-              </div>
+          )}
+          
+          {response.responseType === 'sentiment' && response.data?.sentiment && (
+            <div style={{ maxWidth: '780px', margin: '0 auto' }}>
+              <header style={{ textAlign: 'center', marginBottom: '60px' }}>
+                <h1 style={{
+                  fontSize: '48px',
+                  fontWeight: 600,
+                  letterSpacing: '-0.003em',
+                  marginBottom: '20px',
+                }}>
+                  {response.data.sentiment.product}
+                </h1>
+                <div style={{
+                  fontSize: '96px',
+                  fontWeight: 600,
+                  letterSpacing: '-0.003em',
+                  margin: '20px 0 8px',
+                  color: '#FF6154',
+                }}>
+                  {response.data.sentiment.score}%
+                </div>
+                <p style={{
+                  fontSize: '17px',
+                  color: '#1d1d1f',
+                  marginBottom: '4px',
+                }}>
+                  positive sentiment
+                </p>
+                <p style={{
+                  fontSize: '15px',
+                  color: '#86868b',
+                }}>
+                  Based on {response.data.sentiment.analyzedComments} comments
+                </p>
+              </header>
               
-              {/* Negative */}
               <div style={{
-                padding: '2rem',
-                backgroundColor: '#fef2f2',
-                borderRadius: '16px',
-                border: '1px solid #fecaca',
+                display: 'grid',
+                gridTemplateColumns: '1fr',
+                gap: '32px',
               }}>
-                <h3 style={{ margin: '0 0 1rem', fontSize: '1.5rem' }}>😕 Areas for Improvement</h3>
-                {response.negative.map((item: string, idx: number) => (
-                  <div key={idx} style={{
-                    padding: '0.75rem',
-                    margin: '0.5rem 0',
-                    backgroundColor: 'white',
-                    borderRadius: '8px',
-                    borderLeft: '4px solid #ff3b30',
+                <section style={{
+                  padding: '32px',
+                  borderRadius: '16px',
+                  background: 'rgba(255, 97, 84, 0.04)',
+                  border: '1px solid rgba(255, 97, 84, 0.08)',
+                }}>
+                  <h3 style={{
+                    fontSize: '19px',
+                    fontWeight: 500,
+                    marginBottom: '24px',
+                    letterSpacing: '-0.021em',
                   }}>
-                    "{item}"
-                  </div>
-                ))}
+                    Positive Feedback
+                  </h3>
+                  {response.data.sentiment.positive.map((item, idx) => (
+                    <div key={idx} style={{
+                      padding: idx === 0 ? '0 0 16px' : '16px 0',
+                      borderBottom: idx === response.data.sentiment.positive.length - 1 ? 'none' : '1px solid rgba(0, 0, 0, 0.05)',
+                      fontSize: '15px',
+                      lineHeight: 1.6,
+                    }}>
+                      {item}
+                    </div>
+                  ))}
+                </section>
+                
+                <section style={{
+                  padding: '32px',
+                  borderRadius: '16px',
+                  background: 'rgba(0, 0, 0, 0.02)',
+                  border: '1px solid rgba(0, 0, 0, 0.06)',
+                }}>
+                  <h3 style={{
+                    fontSize: '19px',
+                    fontWeight: 500,
+                    marginBottom: '24px',
+                    letterSpacing: '-0.021em',
+                  }}>
+                    Areas for Improvement
+                  </h3>
+                  {response.data.sentiment.negative.map((item, idx) => (
+                    <div key={idx} style={{
+                      padding: idx === 0 ? '0 0 16px' : '16px 0',
+                      borderBottom: idx === response.data.sentiment.negative.length - 1 ? 'none' : '1px solid rgba(0, 0, 0, 0.05)',
+                      fontSize: '15px',
+                      lineHeight: 1.6,
+                    }}>
+                      {item}
+                    </div>
+                  ))}
+                </section>
               </div>
             </div>
-            
+          )}
+          
+          {response.responseType === 'general' && (
             <div style={{
-              marginTop: '2rem',
-              padding: '1.5rem',
-              backgroundColor: '#f5f5f7',
-              borderRadius: '12px',
-              textAlign: 'center',
+              maxWidth: '720px',
+              margin: '0 auto',
+              padding: '40px',
+              background: '#f5f5f7',
+              borderRadius: '16px',
             }}>
-              <strong>Summary:</strong> {response.summary}
+              <p style={{
+                fontSize: '17px',
+                lineHeight: 1.6,
+                whiteSpace: 'pre-wrap',
+              }}>
+                {response.answer}
+              </p>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+          
+          {/* Tools Used */}
+          {response.toolsUsed && response.toolsUsed.length > 0 && (
+            <div style={{
+              marginTop: '40px',
+              textAlign: 'center',
+              fontSize: '13px',
+              color: '#86868b',
+            }}>
+              Tools used: {response.toolsUsed.map(t => t.tool).join(', ')}
+            </div>
+          )}
+        </div>
+      )}
+      
+      <style jsx>{`
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+        
+        @keyframes fadeOut {
+          from {
+            opacity: 1;
+          }
+          to {
+            opacity: 0;
+          }
+        }
+        
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        
+        @keyframes pulse {
+          0%, 80%, 100% {
+            opacity: 0.3;
+            transform: scale(1);
+          }
+          40% {
+            opacity: 1;
+            transform: scale(1.2);
+          }
+        }
+      `}</style>
     </div>
   )
 }
